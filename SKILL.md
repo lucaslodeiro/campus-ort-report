@@ -1,39 +1,31 @@
 # campus-ort-report
 
-Generate academic reports for ORT Campus students. Extracts calendar events, pizarron messages, and pending assignments.
+Generate academic reports for ORT Campus students. Extracts calendar events using iCal feed with LLM-based categorization.
 
 ## Description
 
 This skill generates comprehensive academic reports for students using ORT Campus Virtual. It extracts:
-- Calendar events (exams, deliveries, academic events) - **auto-detected via navigation**
-- Pizarron messages (last 2 weeks)
-- Group memberships
-- Urgent items (≤7 days)
+- Calendar events (exams, deliveries, holidays, academic events) - **via iCal feed with LLM categorization**
+- Event categorization powered by Ollama LLM (Examen, Entrega, Feriado, Evento Academico, Otro)
+- Unified event list for next 15 days
 
 ## Prerequisites
 
 - 1Password CLI (`op`) configured with service account token
 - The token must be available as `OP_SERVICE_ACCOUNT_TOKEN` environment variable
 - 1Password vault "Klaw" with credentials for each student
+- Ollama running locally with `kimi-k2.5:cloud` model
 
 ## 1Password Setup
 
 ### Option 1: Global Environment (Recommended)
 
-Create `~/.zshenv` with the service account token (loaded in all zsh sessions):
+Create `~/.zshenv` with the service account token:
 
 ```bash
 # ~/.zshenv
 export OP_SERVICE_ACCOUNT_TOKEN="your_token_here"
 ```
-
-### Option 2: Legacy (~/.zshrc)
-
-```bash
-export OP_SERVICE_ACCOUNT_TOKEN="your_token_here"
-```
-
-> **Note:** `~/.zshenv` is preferred because it loads in all zsh sessions (interactive and non-interactive), while `~/.zshrc` only loads in interactive shells.
 
 ### Credential Items
 
@@ -52,7 +44,7 @@ Create credential items in 1Password:
 python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py --student "Benja"
 
 # Generate report with custom date filter
-python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py --student "Valen" --days 14
+python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py --student "Valen" --days 15
 ```
 
 ### Generate Telegram Formatted Report (Recommended for Cron)
@@ -66,192 +58,228 @@ python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_t
 
 ## How It Works
 
-### Calendar Auto-Discovery
-The skill automatically navigates to the calendar using the UI flow:
-1. Click on menu icon (☰)
-2. Click on "Mi Curso"
-3. Click on "MÁS EVENTOS"
-4. Extract events from the loaded calendar page
+### iCal Feed Extraction
+The skill navigates to the calendar and extracts the iCal feed:
+1. Login to Campus ORT
+2. Navigate via UI: Menu → Mi Curso → MÁS EVENTOS
+3. Extract iCal URL from `embedCode` input
+4. Download full iCal feed (typically 1000+ events)
+5. Parse events for next 15 days
 
-**No manual URL configuration needed.**
+### LLM-Based Event Categorization
+Each event is categorized using Ollama LLM based on title and description:
 
-### Pizarron Extraction
-The skill scans all student groups and extracts messages from the last 2 weeks.
+**Categories:**
+- **Examen**: evaluaciones, pruebas, tests, parciales, reading, listening, oral, escrito
+- **Entrega**: assignments, tareas, trabajos prácticos, proyectos, informes
+- **Feriado**: días no laborables, festivos judíos (Pesaj, Iom Hashoa, etc.)
+- **Evento Academico**: reuniones, charlas, actividades especiales, conmemoraciones
+- **Otro**: eventos que no encajan en las categorías anteriores
 
-### Event Processing
-Calendar events are automatically processed to extract:
-- Date (from ISO format in HTML)
-- Event title and description
-- Event type (exam, delivery, other)
-- Subject/materia (extracted from title)
+**LLM Prompt:**
+```
+Analiza este evento escolar y clasificalo en una de estas categorias:
+- Examen: evaluaciones, pruebas, tests, parciales, exámenes orales/escritos
+- Entrega: trabajos prácticos, assignments, tareas, proyectos, informes
+- Feriado: días no laborables, festivos judíos, asuetos
+- Evento Academico: reuniones, charlas, actividades especiales, conmemoraciones
+- Otro: eventos que no encajan en las anteriores
+
+Evento: {title}
+Descripción: {description}
+
+Responde SOLO con el nombre de la categoría.
+```
 
 ## Dependencies
 
 - Playwright
 - Python 3.9+
 - 1Password CLI (`op`)
+- Ollama (local LLM server)
 
 ## Output
 
-Reports are saved to `/tmp/reporte_academico_{student}.txt`
+Reports are saved to:
+- `/tmp/reporte_academico_{student}.txt` - Individual reports
+- `/tmp/reporte_telegram.txt` - Combined Telegram-formatted report
 
 ## Report Format (Telegram Message)
-
-When sending reports via Telegram, use this exact format:
 
 ```
 📚 Reporte Campus ORT - {Día} {Fecha}
 
 ───
 
-{ESTUDIANTE} - {Año} {Grupo}
+**{ESTUDIANTE}** - {Año} {Grupo}
 
-🚨 URGENTE - Próximos 7 días:
+📆 Próximas Evaluaciones:
 
-• {emoji} {fecha} ({día relativo}) - {materia}: {título}
-• {emoji} {fecha} ({día relativo}) - {materia}: {título}
+• {fecha} - {título} ({categoría})
+• {fecha} - {título} ({categoría})
 ...
 
-📆 Próximas Evaluaciones ({N} total):
+📅 Asuetos y Feriados:
 
-• {fecha} - {materia}
-• {fecha} - {materia}
+• 🏖️ {fecha} - {título} ({categoría})
+• 🏖️ {fecha} - {título} ({categoría})
 ...
 
-📅 Asuetos: {lista de asuetos}
+📋 Otros Eventos:
 
-💬 Mensajes ({N}):
-
-• {materia} ({fecha}): "{preview del mensaje}..."
-• {materia} ({fecha}): "{preview del mensaje}..."
+• {fecha} - {título} ({categoría})
 ...
 
 ───
 
-📊 Resumen: {Estudiante}: {N} evaluaciones, {N} urgentes, {N} mensajes | {Estudiante}: {N} evaluaciones, {N} urgentes, {N} mensajes
+📊 Resumen: {Estudiante}: {N} eval, {N} asuetos, {N} otros | {Estudiante}: {N} eval, {N} asuetos, {N} otros
 ```
 
 **Ejemplo real:**
 ```
-📚 Reporte Campus ORT - Domingo 5/4/2026
+📚 Reporte Campus ORT - Martes 7/4/2026
 
 ───
 
-BENJA - 2° año NE2N
+**BENJA** - 2° año NE2N
 
-🚨 URGENTE - Próximos 7 días:
+📆 Próximas Evaluaciones:
 
-• 🏖️ 08/04 (martes) - Pesaj 7mo día - Asueto
-• 🏖️ 09/04 (miércoles) - Pesaj 8vo día - Asueto
-• 📌 10/04 (viernes) - Inglés: Literature Assignment -Pili-
-• 📝 10/04 (viernes) - Historia: Evaluación
-• 📝 13/04 (lunes) - Tecnología: Evaluación
+• 10/04/2026 - Evaluación de Historia (Examen)
+• 10/04/2026 - Literature Assignment -Pili- (Entrega)
+• 13/04/2026 - Evaluación Tecnología (Examen)
+• 15/04/2026 - Evaluación de Fuentes (Examen)
+• 15/04/2026 - Evaluación de matemática (Examen)
+• 16/04/2026 - Listening Test -Pili- (Examen)
+• 16/04/2026 - Listening Test (Benyakar) (Examen)
+• 17/04/2026 - Use of English test -Pili- (Examen)
+• 17/04/2026 - English Test Units 1-2 M.Laura (Examen)
+• 17/04/2026 - Use of English (Benyakar) (Examen)
+• 20/04/2026 - Evaluación De Etica (Examen)
 
-📆 Próximas Evaluaciones (10 total):
+📅 Asuetos y Feriados:
 
-• 10/04 - Historia
-• 13/04 - Tecnología
-• 15/04 - Matemática
-• ...
+• 🏖️ 08/04/2026 - Pesaj 7mo día - Asueto (Feriado)
+• 🏖️ 09/04/2026 - Pesaj 8vo día - Asueto (Feriado)
+• 🏖️ 14/04/2026 - Iom Hashoa (Feriado)
+• 🏖️ 21/04/2026 - Iom Hazikaron (Evento Academico)
+• 🏖️ 22/04/2026 - Iom Haatzmaut (Feriado)
 
-📅 Asuetos: Pesaj (8-9/4), Iom Hashoa (14/4), Iom Hazikaron (21/4), Iom Haatzmaut (22/4)
+📋 Otros Eventos:
 
-💬 Mensajes (1):
-
-• Biología (30/3): "Chicos! Para la clase que viene (lunes 6/4) tienen q..."
-
-───
-
-VALEN - 7° año GA7E
-
-🚨 URGENTE - Próximos 7 días:
-
-• 📝 06/04 (HOY) - Inglés: TEST ENGLISH UNITS 1&2 (PROF. Mariana)
-• 📌 06/04 (HOY) - Assignment in class (T3 Paula)
-• 📌 06/04 (HOY) - English exam (Pablo B)
-• 🏖️ 08/04 (martes) - Pesaj 7mo día - Asueto
-• 🏖️ 09/04 (miércoles) - Pesaj 8vo día - Asueto
-
-📆 Próximas Evaluaciones (9 total):
-
-• 06/04 - Inglés: TEST ENGLISH
-• 15/04 - Matemática
-• ...
-
-📅 Asuetos: Mismos que Benja
-
-💬 Mensajes (7):
-
-• Educación Judía (23/3): "hola profe no pude realizar la actividad uno porque..."
-• Inglés (22/3): "Hello! Les comparto links al student's book y al wor..."
-• ...
+• 17/04/2026 - Use of English (Benyakar) (Otro)
 
 ───
 
-📊 Resumen: Benja: 10 evaluaciones, 5 urgentes, 1 mensaje | Valen: 9 evaluaciones, 5 urgentes, 7 mensajes
-```
+**VALEN** - 7° año GA7E
 
-## Report Sections (Archivo TXT)
+📆 Próximas Evaluaciones:
 
-1. **🚨 Urgent (≤7 days)**: Exams, deliveries, holidays, and urgent pizarron tasks
-2. **📆 Upcoming Evaluations**: List of upcoming exams and deliveries with dates
-3. **📅 Academic Events**: Important academic dates (bimester start/end)
-4. **💬 Pizarron Messages**: Tasks and messages from last 2 weeks
+• 15/04/2026 - Evaluación de Matemática (Examen)
+• 16/04/2026 - READING TEST (ENGLISH T4 Prof. Mariana) (Examen)
+• 16/04/2026 - Evaluación de Sociales (U1) (Examen)
+• 17/04/2026 - Evaluación CyT (Examen)
+• 20/04/2026 - Reading task (T3 Paula) (Examen)
+• 20/04/2026 - UE test shirly. (Examen)
+• 22/04/2026 - English test (T3 Paula) (Examen)
+• 22/04/2026 - Reading comprehension test. Shirly (Examen)
 
-## File Structure
+📅 Asuetos y Feriados:
 
-```
-campus-ort-report/
-├── SKILL.md              # This documentation
-├── generate_report.py    # Main report generator
-└── scraper.py            # Campus ORT scraper with auto-discovery
+• 🏖️ 08/04/2026 - Pesaj 7mo día - Asueto (Feriado)
+• 🏖️ 09/04/2026 - Pesaj 8vo día - Asueto (Feriado)
+• 🏖️ 14/04/2026 - Iom Hashoa (Feriado)
+• 🏖️ 21/04/2026 - Iom Hazikaron (Evento Academico)
+• 🏖️ 22/04/2026 - Iom Haatzmaut (Feriado)
+
+───
+
+📊 Resumen: Benja: 11 eval, 5 asuetos, 1 otros | Valen: 8 eval, 5 asuetos, 0 otros
 ```
 
 ## Technical Details
 
-### Auto-Discovery Implementation
-The scraper uses Playwright to:
-- Navigate via UI elements (material-icons menu)
-- Extract calendar events from HTML using regex patterns
-- Parse ISO dates from hidden form fields
-- Handle dynamic content loading
+### iCal Extraction Process
 
-### Event Extraction
-Events are extracted from `CalendarMesInfo` divs that contain event divs with:
-- Background color indicating event type
-- `title` attribute with event description
-- Associated date from `isoDay_{day}` hidden inputs
+```python
+async def get_calendar_ical(self):
+    # 1. Navigate via UI
+    await page.goto("https://campus.ort.edu.ar/mi-curso/calendario")
+    
+    # 2. Extract iCal URL from embedCode input
+    ical_url = await page.evaluate('document.getElementById("embedCode")?.value')
+    
+    # 3. Download iCal feed
+    ical_data = download(ical_url)
+    
+    # 4. Parse VEVENT blocks
+    for vevent in parse_ical(ical_data):
+        title = extract_summary(vevent)
+        description = extract_description(vevent)
+        date = extract_date(vevent)
+        
+        # 5. Categorize with LLM
+        category = await categorize_event_with_llm(title, description)
+```
 
-## Troubleshooting
+### LLM Categorization
 
-- **1Password token not found**: Ensure `OP_SERVICE_ACCOUNT_TOKEN` is exported in `~/.zshenv` (or `~/.zshrc`)
-  - Verify with: `echo $OP_SERVICE_ACCOUNT_TOKEN`
-  - For non-interactive shells, use `~/.zshenv` instead of `~/.zshrc`
-- **Calendar not found**: The skill will exit if "MÁS EVENTOS" navigation fails
-- **No events extracted**: Check `/tmp/calendar_page.html` for debugging
+```python
+async def categorize_event_with_llm(title: str, description: str) -> str:
+    prompt = f"""Analiza este evento escolar y clasificalo...
+    
+    Evento: {title}
+    Descripción: {description}
+    
+    Responde SOLO con la categoría."""
+    
+    response = ollama.generate(model="kimi-k2.5:cloud", prompt=prompt)
+    return normalize_category(response)
+```
+
+**Timeout:** 30 seconds per event
+**Fallback:** Keyword matching if LLM fails
+
+### File Structure
+
+```
+campus-ort-report/
+├── SKILL.md                      # This documentation
+├── generate_report.py             # Main report generator (TXT format)
+├── generate_telegram_report.py    # Telegram-formatted report
+└── scraper.py                     # Campus ORT scraper with iCal extraction
+```
 
 ## Automation
 
-### Daily Reports via Cron
-
-Schedule automatic reports (e.g., weekdays at 18:00):
+### Daily Reports via OpenClaw Cron
 
 ```bash
-# Using OpenClaw cron
-openclaw cron add --name "Daily Reports" \
-  --schedule "0 18 * * 1-5" \
-  --command "python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py --student Benja && python3 /usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py --student Valen"
+# Check current cron jobs
+openclaw cron list
+
+# The skill should have a cron job configured like:
+# Name: "Daily Academic Reports - Benja y Valen"
+# Schedule: "0 18 * * 1,2,3,4,5" (weekdays at 18:00)
+# Command: python3 generate_telegram_report.py
 ```
 
-Or use a wrapper script:
+## Troubleshooting
 
-```bash
-#!/bin/zsh
-# /Users/lucas.lodeiro/.openclaw/workspace/scripts/daily_reports.sh
-SCRIPT_PATH="/usr/local/lib/node_modules/openclaw/skills/campus-ort-report/generate_report.py"
-python3 "$SCRIPT_PATH" --student "Benja"
-python3 "$SCRIPT_PATH" --student "Valen"
-```
+- **1Password token not found**: Ensure `OP_SERVICE_ACCOUNT_TOKEN` is exported
+- **Ollama not responding**: Check Ollama is running with `ollama list`
+- **iCal URL not found**: The embedCode input may not be loaded yet (navigation issue)
+- **LLM timeout**: Events will be categorized with keyword fallback
+- **Empty report**: Check `/tmp/calendar_page.html` for debugging
+
+## Recent Changes
+
+### v3.0 - iCal + LLM Categorization
+- Migrated from HTML scraping to iCal feed extraction
+- Added LLM-based event categorization (Ollama)
+- Unified event list (no more separate sections)
+- Categories: Examen, Entrega, Feriado, Evento Academico, Otro
+- Removed pizarron message extraction (focus on calendar events)
 
 ## Author
 
