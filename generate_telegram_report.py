@@ -41,10 +41,9 @@ def parse_report(filepath):
     data = {
         'nombre': '',
         'curso': '',
-        'urgentes': [],
         'evaluaciones': [],
         'asuetos': [],
-        'mensajes': []
+        'otros': []
     }
     
     # Extraer nombre y curso
@@ -53,69 +52,40 @@ def parse_report(filepath):
         data['nombre'] = nombre_match.group(1)
         data['curso'] = nombre_match.group(2).strip()
     
-    # Extraer urgentes
-    urgente_section = re.search(r'🚨 URGENTE.*?\n─+\n(.*?)(?=\n📆|\n📅|$)', content, re.DOTALL)
-    if urgente_section:
-        for line in urgente_section.group(1).split('\n'):
-            line = line.strip()
-            # Buscar líneas con emojis o bullets
-            if line.startswith('🏖️') or line.startswith('📝') or line.startswith('📌'):
-                # Limpiar el item - remover emoji al inicio, espacios extras, caracteres ocultos y subtítulo
-                item = re.sub(r'^[🏖️📝📌]\s*', '', line)
-                item = re.sub(r'\s+└─.*', '', item)
-                item = re.sub(r'[\s\uFE0F]+', ' ', item)  # Normalizar espacios y emoji modifiers
-                item = item.strip()
-                if item and not item.startswith('─'):
-                    data['urgentes'].append(item)
-    
-    # Extraer evaluaciones
+    # Extraer evaluaciones (nuevo formato: fecha - título (categoría))
     eval_section = re.search(r'📆 Próximas Evaluaciones.*?\n─+\n(.*?)(?=\n📅|\n📋|$)', content, re.DOTALL)
     if eval_section:
         for line in eval_section.group(1).split('\n'):
             line = line.strip()
             # Buscar líneas con emoji de evaluación
             if line.startswith('📝'):
-                item = re.sub(r'^[📝]\s*', '', line)
-                item = re.sub(r'\s+└─.*', '', item)  # Remover subtítulo
-                # Extraer fecha y materia
-                match = re.match(r'(\d{2}/\d{2}/\d{4})[^-]*-\s*(.+)', item)
-                if match and 'total' not in item.lower():
-                    data['evaluaciones'].append(f"{match.group(1)} - {match.group(2).strip()}")
+                # Formato: 📝 10/04/2026 - Evaluación de Historia (Examen)
+                item = re.sub(r'^[📝🏖️📌]\s*', '', line)
+                data['evaluaciones'].append(item)
     
-    # Extraer asuetos
+    # Extraer asuetos (nuevo formato: 🏖️ fecha - título (categoría))
     asueto_section = re.search(r'📅 Asuetos y Feriados.*?\n─+\n(.*?)(?=\n📋|$)', content, re.DOTALL)
     if asueto_section:
         asuetos_text = []
         for line in asueto_section.group(1).split('\n'):
-            if line.strip().startswith('🏖️'):
-                item = line.strip()
-                item = re.sub(r'^🏖️\s*', '', item)
-                # Extraer solo nombre del feriado
-                feriado_match = re.search(r'-\s+(.+)$', item)
-                if feriado_match:
-                    asuetos_text.append(feriado_match.group(1))
+            line = line.strip()
+            if line.startswith('🏖️'):
+                # Formato: 🏖️ 07/04/2026 - Víspera 7mo día Pesaj (Asueto)
+                item = line
+                asuetos_text.append(item)
         data['asuetos'] = asuetos_text
     
-    # Extraer mensajes
-    msg_section = re.search(r'💬 Mensajes.*?\n─+\n(.*?)(?=\n─+|$)', content, re.DOTALL)
-    if msg_section:
-        current_materia = ""
-        for line in msg_section.group(1).split('\n'):
+    # Extraer otros eventos (nuevo formato: 📋 fecha - título (categoría))
+    otros_section = re.search(r'📋 Otros Eventos.*?\n─+\n(.*?)(?=\n─+|$)', content, re.DOTALL)
+    if otros_section:
+        otros_text = []
+        for line in otros_section.group(1).split('\n'):
             line = line.strip()
-            if line.startswith('📌'):
-                # Nueva materia
-                materia_match = re.search(r'📌\s*(.+?)(?:\s+\(|$)', line)
-                if materia_match:
-                    current_materia = materia_match.group(1).strip()
-            elif line.startswith('💬') and current_materia:
-                # Mensaje
-                msg_match = re.search(r'💬\s*(\d{1,2}/\d{1,2}/?.*?):\s*(.+)$', line)
-                if msg_match:
-                    data['mensajes'].append({
-                        'materia': current_materia,
-                        'fecha': msg_match.group(1),
-                        'texto': msg_match.group(2)[:60] + '...' if len(msg_match.group(2)) > 60 else msg_match.group(2)
-                    })
+            if line and (line.startswith('📌') or line.startswith('🏖️') or line.startswith('📝')):
+                # Formato: 📌 10/04/2026 - Literature Assignmen... (Otros)
+                item = re.sub(r'^[📌🏖️📝]\s*', '', line)
+                otros_text.append(item)
+        data['otros'] = otros_text
     
     return data
 
@@ -136,62 +106,41 @@ def format_telegram_message(benja_data, valen_data):
     
     # BENJA
     mensaje += f"\n**BENJA** - {benja_data['curso']}\n"
-    mensaje += "\n🚨 URGENTE - Próximos 7 días:\n\n"
     
-    for urgente in benja_data['urgentes'][:5]:
-        urgente_clean = urgente.strip()
-        # Determinar emoji según contenido
-        if 'asueto' in urgente_clean.lower() or 'pesaj' in urgente_clean.lower() or 'feriado' in urgente_clean.lower():
-            emoji = "🏖️"
-        elif 'evaluación' in urgente_clean.lower() or 'test' in urgente_clean.lower() or 'examen' in urgente_clean.lower():
-            emoji = "📝"
-        else:
-            emoji = "📌"
-        
-        mensaje += f"• {emoji} {urgente_clean}\n"
-    
-    mensaje += f"\n📆 Próximas Evaluaciones ({len(benja_data['evaluaciones'])} total):\n\n"
-    for eval in benja_data['evaluaciones'][:8]:
+    mensaje += "\n📆 Próximas Evaluaciones:\n\n"
+    for eval in benja_data['evaluaciones'][:15]:
         mensaje += f"• {eval}\n"
     
     if benja_data['asuetos']:
-        mensaje += f"\n📅 Asuetos: {', '.join(benja_data['asuetos'][:4])}\n"
+        mensaje += "\n📅 Asuetos y Feriados:\n\n"
+        for asueto in benja_data['asuetos'][:15]:
+            mensaje += f"• {asueto}\n"
     
-    if benja_data['mensajes']:
-        mensaje += f"\n💬 Mensajes ({len(benja_data['mensajes'])}):\n\n"
-        for msg in benja_data['mensajes'][:3]:  # Limitar a 3
-            mensaje += f"• {msg['materia']} ({msg['fecha']}): \"{msg['texto']}\"\n"
+    if benja_data['otros']:
+        mensaje += "\n📋 Otros Eventos:\n\n"
+        for otro in benja_data['otros'][:15]:
+            mensaje += f"• {otro}\n"
     
     # VALEN
     mensaje += "\n───\n"
     mensaje += f"\n**VALEN** - {valen_data['curso']}\n"
-    mensaje += "\n🚨 URGENTE - Próximos 7 días:\n\n"
     
-    for urgente in valen_data['urgentes'][:5]:
-        urgente_clean = urgente.strip()
-        if 'asueto' in urgente_clean.lower() or 'pesaj' in urgente_clean.lower():
-            emoji = "🏖️"
-        elif 'evaluación' in urgente_clean.lower() or 'test' in urgente_clean.lower() or 'examen' in urgente_clean.lower() or 'english' in urgente_clean.lower():
-            emoji = "📝"
-        else:
-            emoji = "📌"
-        
-        mensaje += f"• {emoji} {urgente_clean}\n"
-    
-    mensaje += f"\n📆 Próximas Evaluaciones ({len(valen_data['evaluaciones'])} total):\n\n"
-    for eval in valen_data['evaluaciones'][:8]:
+    mensaje += "\n📆 Próximas Evaluaciones:\n\n"
+    for eval in valen_data['evaluaciones'][:15]:
         mensaje += f"• {eval}\n"
     
     if valen_data['asuetos']:
-        mensaje += f"\n📅 Asuetos: {', '.join(valen_data['asuetos'][:4])}\n"
+        mensaje += "\n📅 Asuetos y Feriados:\n\n"
+        for asueto in valen_data['asuetos'][:15]:
+            mensaje += f"• {asueto}\n"
     
-    if valen_data['mensajes']:
-        mensaje += f"\n💬 Mensajes ({len(valen_data['mensajes'])}):\n\n"
-        for msg in valen_data['mensajes'][:5]:  # Limitar a 5 para Valen
-            mensaje += f"• {msg['materia']} ({msg['fecha']}): \"{msg['texto']}\"\n"
+    if valen_data['otros']:
+        mensaje += "\n📋 Otros Eventos:\n\n"
+        for otro in valen_data['otros'][:15]:
+            mensaje += f"• {otro}\n"
     
     mensaje += "\n───\n"
-    mensaje += f"\n📊 Resumen: Benja: {len(benja_data['evaluaciones'])} evaluaciones, {len(benja_data['urgentes'])} urgentes, {len(benja_data['mensajes'])} mensajes | Valen: {len(valen_data['evaluaciones'])} evaluaciones, {len(valen_data['urgentes'])} urgentes, {len(valen_data['mensajes'])} mensajes"
+    mensaje += f"\n📊 Resumen: Benja: {len(benja_data['evaluaciones'])} eval, {len(benja_data['asuetos'])} asuetos, {len(benja_data['otros'])} otros | Valen: {len(valen_data['evaluaciones'])} eval, {len(valen_data['asuetos'])} asuetos, {len(valen_data['otros'])} otros"
     
     return mensaje
 

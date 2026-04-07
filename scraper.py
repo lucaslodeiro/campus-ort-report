@@ -594,13 +594,29 @@ class OrtCampusScraperV2:
                     if event_date.date() < today.date():
                         continue
                     
-                    # Determine event type
-                    combined = (title + ' ' + event_text).lower()
+                    # Extract background color to determine category
+                    color_match = re.search(r'background-color:\s*(#[A-Fa-f0-9]{6})', content[:500], re.IGNORECASE)
+                    bg_color = color_match.group(1).upper() if color_match else ''
                     
-                    if 'entrega' in combined:
+                    # Map color to category (exact colors from Campus ORT reference)
+                    color_to_category = {
+                        '#FF8A80': 'Feriados y Asuetos',
+                        '#FFCCD3': 'Examen',
+                        '#B0E0E6': 'Entregas',
+                        '#AED581': 'Conmemoraciones',
+                        '#AEC6CF': 'Otros',
+                        '#C3D2F5': 'Calendario Académico'
+                    }
+                    
+                    # Determine event type from category
+                    categoria = color_to_category.get(bg_color, 'Otros')
+                    
+                    if categoria == 'Entregas':
                         evt_type = 'entrega'
-                    elif any(word in combined for word in ['evaluación', 'evaluacion', 'examen', 'prueba', 'parcial', 'test']):
+                    elif categoria == 'Examen':
                         evt_type = 'examen'
+                    elif categoria == 'Feriados y Asuetos':
+                        evt_type = 'asueto'
                     else:
                         evt_type = 'otro'
                     
@@ -613,6 +629,7 @@ class OrtCampusScraperV2:
                         "title": event_text[:100] if event_text else title[:100],
                         "materia": materia,
                         "type": evt_type,
+                        "categoria": categoria,
                         "detalle": title
                     })
             
@@ -691,6 +708,219 @@ class OrtCampusScraperV2:
         return 'No especificada'
 
 
+
+    async def get_calendar_ical(self) -> List[Dict]:
+        """Extract calendar events from iCal feed"""
+        import urllib.request
+        from datetime import datetime, timedelta
+        import re
+        
+        events = []
+        try:
+            print("\n📅 Extracting iCal calendar...")
+            
+            # Step 0: Navigate to calendar page via UI (same as get_calendar_auto)
+            print("   Navigating to calendar via UI...")
+            
+            # Step 1: Click on menu
+            menu_selectors = [
+                "i.material-icons:has-text('menu')",
+                "i.material-icons.md-dark",
+                "button i.material-icons",
+            ]
+            
+            for selector in menu_selectors:
+                try:
+                    menu = await self.page.query_selector(selector)
+                    if menu:
+                        await menu.click()
+                        await asyncio.sleep(1)
+                        break
+                except:
+                    continue
+            
+            # Step 2: Click on "Mi Curso"
+            mi_curso_selectors = [
+                "text=Mi Curso",
+                "a:has-text('Mi Curso')",
+                "span:has-text('Mi Curso')",
+            ]
+            
+            for selector in mi_curso_selectors:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element:
+                        await element.click()
+                        await asyncio.sleep(2)
+                        break
+                except:
+                    continue
+            
+            # Step 3: Click on "MÁS EVENTOS"
+            mas_eventos_selectors = [
+                "text=MÁS EVENTOS",
+                "text=Más eventos",
+                "a:has-text('MÁS EVENTOS')",
+                "[href*='eventos']",
+                "[href*='calendario']",
+            ]
+            
+            for selector in mas_eventos_selectors:
+                try:
+                    element = await self.page.query_selector(selector)
+                    if element:
+                        await element.click()
+                        await asyncio.sleep(3)
+                        break
+                except:
+                    continue
+            
+            await asyncio.sleep(2)
+            
+            # Step 1: Get iCal URL from the embedCode input (JavaScript-generated)
+            print("   Getting iCal URL from embedCode input...")
+            
+            ical_url = None
+            try:
+                # First try: wait for the input to exist (max 10s)
+                try:
+                    await self.page.wait_for_selector('#embedCode', timeout=10000)
+                    ical_url = await self.page.evaluate('() => document.getElementById("embedCode")?.value')
+                except:
+                    pass
+                
+                # Second try: extract from HTML directly using regex
+                if not ical_url:
+                    html = await self.page.content()
+                    
+                    # Pattern 1: Look for embedCode input with value
+                    match = re.search(r'id=["\']embedCode["\'][^>]*?value=["\']([^"\']+)["\']', html, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        ical_url = match.group(1)
+                    
+                    # Pattern 2: Look for any /ical/ URL
+                    if not ical_url:
+                        match = re.search(r'https?://[^"\'\s<>]+/ical/?[^"\'\s<>]*', html)
+                        if match:
+                            ical_url = match.group(0)
+                    match = re.search(r'id=["\']embedCode["\'][^>]*?value=["\']([^"\']+)["\']', html, re.DOTALL | re.IGNORECASE)
+                    if match:
+                        ical_url = match.group(1)
+                    
+                    # Pattern 2: Look for any /ical/ URL
+                    if not ical_url:
+                        match = re.search(r'https?://[^"\'\s<>]+/ical/?[^"\'\s<>]*', html)
+                        if match:
+                            ical_url = match.group(0)
+                
+                if ical_url:
+                    print(f"   ✓ Found iCal URL: {ical_url}")
+            except Exception as e:
+                print(f"   Error getting iCal URL: {e}")
+            
+            if not ical_url:
+                raise Exception("iCal URL not found - embedCode input not available")
+            
+            # Step 2: Download iCal feed
+            import urllib.request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+            }
+            req = urllib.request.Request(ical_url, headers=headers)
+            
+            try:
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    ical_data = response.read().decode('utf-8')
+            except Exception as e:
+                raise Exception(f"Error downloading iCal: {e}")
+            
+            # Step 3: Parse iCal data
+            today = datetime.now()
+            
+            # Parse VEVENT blocks
+            vevent_pattern = r'BEGIN:VEVENT(.*?)END:VEVENT'
+            vevents = re.findall(vevent_pattern, ical_data, re.DOTALL)
+            
+            print(f"   ✓ Found {len(vevents)} events in iCal")
+            
+            for vevent in vevents:
+                try:
+                    # Extract summary (title)
+                    summary_match = re.search(r'SUMMARY:(.*?)(?:\r?\n|\Z)', vevent, re.DOTALL)
+                    if not summary_match:
+                        continue
+                    
+                    # Handle folded lines in iCal
+                    summary = summary_match.group(1).replace('\n ', '').replace('\r\n ', '').strip()
+                    
+                    # Extract start date
+                    dtstart_match = re.search(r'DTSTART(?:;VALUE=DATE)?[:;](\d{8})', vevent)
+                    if dtstart_match:
+                        date_str = dtstart_match.group(1)
+                        event_date = datetime(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+                    else:
+                        # Try datetime format
+                        dtstart_match = re.search(r'DTSTART[:;](\d{8})T(\d{6})', vevent)
+                        if dtstart_match:
+                            date_str = dtstart_match.group(1)
+                            event_date = datetime(int(date_str[:4]), int(date_str[4:6]), int(date_str[6:8]))
+                        else:
+                            continue
+                    
+                    # Filter: only future events (next 15 days)
+                    days_diff = (event_date - today).days
+                    if days_diff < 0 or days_diff > 15:
+                        continue
+                    
+                    # Format date
+                    date_formatted = f"{event_date.day:02d}/{event_date.month:02d}/{event_date.year}"
+                    
+                    # Extract description (optional)
+                    desc_match = re.search(r'DESCRIPTION:(.*?)(?:\r?\n[\w-]+:|\Z)', vevent, re.DOTALL)
+                    description = desc_match.group(1).replace('\n ', '').strip() if desc_match else ""
+                    
+                    # Extract category from description or title
+                    title_lower = summary.lower()
+                    
+                    # Determine event type by keywords in title/description
+                    if 'entrega' in title_lower or 'assignment' in title_lower or 'tarea' in title_lower:
+                        evt_type = 'entrega'
+                        categoria = 'Entregas'
+                    elif any(word in title_lower for word in ['evaluación', 'evaluacion', 'examen', 'prueba', 'parcial', 'test']):
+                        evt_type = 'examen'
+                        categoria = 'Examen'
+                    elif any(word in title_lower for word in ['pesaj', 'asueto', 'feriado', 'iom', 'hashoa', 'haatzmaut', 'hazikaron']):
+                        evt_type = 'asueto'
+                        categoria = 'Feriados y Asuetos'
+                    else:
+                        evt_type = 'otro'
+                        categoria = 'Otros'
+                    
+                    events.append({
+                        "date": date_formatted,
+                        "date_obj": event_date,
+                        "title": summary[:100],
+                        "materia": "No especificada",
+                        "type": evt_type,
+                        "categoria": categoria,
+                        "detalle": description
+                    })
+                    
+                except Exception as e:
+                    continue
+            
+            # Sort by date
+            events.sort(key=lambda x: x['date_obj'])
+            
+            print(f"   ✓ Extracted {len(events)} events for next 15 days")
+            return events
+            
+        except Exception as e:
+            print(f"✗ Error extracting iCal: {e}")
+            raise
+
+
+
 async def main():
     """Test the scraper"""
     print("=== ORT Campus Scraper V3 - Academic Messages Only ===\n")
@@ -727,7 +957,6 @@ async def main():
         traceback.print_exc()
     finally:
         await scraper.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

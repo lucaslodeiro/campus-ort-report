@@ -84,14 +84,11 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
         
         print("✓ Login successful\n")
         
-        # Extract pizarron and private messages (academic only, last 15 days)
-        print(f"Extracting academic messages (last {days_back} days)...")
-        messages = await scraper.get_all_pizarron_messages(days_back=days_back)
-        print(f"✓ Found {len(messages)} academic messages\n")
+        # Messages extraction disabled - only calendar events reported
         
-        # Extract calendar automatically
+        # Extract calendar automatically (using iCal feed)
         print("Extracting calendar...")
-        calendar_events = await scraper.get_calendar_auto()
+        calendar_events = await scraper.get_calendar_ical()
         print(f"✓ Found {len(calendar_events)} calendar events\n")
         
         # Detect grade from username prefix
@@ -103,7 +100,9 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
         other_events = [e for e in calendar_events if e not in holidays and e not in evaluations]
         
         # URGENT events (next 7 days)
-        urgent = [e for e in calendar_events if 0 <= (e['date_obj'] - today).days <= 7]
+        # Filter events for next 15 days
+        upcoming_events = [e for e in calendar_events 
+                          if 0 <= (e['date_obj'] - today).days <= 15]
         
         # Build improved report with table format
         lines = [
@@ -114,129 +113,65 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
             "",
         ]
         
-        # URGENT section
-        if urgent:
-            lines.extend([
-                "🚨 URGENTE - Próximos 7 días",
-                "───────────────────────────────────────────────────────────",
-            ])
-            
-            for evt in urgent:
-                emoji = get_emoji_for_event(evt['type'], evt['title'])
-                # Comparar solo fechas (sin hora/timezone) para evitar problemas de offset
-                evt_date = evt['date_obj'].date()
-                today_date = today.date()
-                days_left = (evt_date - today_date).days
-                days_text = "HOY" if days_left == 0 else f"en {days_left} día{'s' if days_left != 1 else ''}"
-                
-                materia_display = evt['materia'] if evt['materia'] != 'No especificada' else ''
-                title_display = truncate_text(evt['title'], 45)
-                
-                if materia_display:
-                    lines.append(f"{emoji} {evt['date']} ({days_text}) - {materia_display}")
-                else:
-                    lines.append(f"{emoji} {evt['date']} ({days_text}) - {title_display}")
-                
-                # Show detail if different from title
-                detail = evt.get('detalle', '')
-                if detail and detail != evt['title'] and len(detail) > 5:
-                    detail_clean = truncate_text(detail, 50)
-                    lines.append(f"   └─ {detail_clean}")
-            
-            lines.append("")
+        # Filter events for next 15 days
+        upcoming_evaluations = [e for e in calendar_events 
+                                if 0 <= (e['date_obj'] - today).days <= 15 
+                                and e['type'] in ['examen', 'entrega']]
         
-        # UPCOMING EVALUATIONS TABLE
-        if evaluations:
+        upcoming_holidays = [e for e in calendar_events 
+                            if 0 <= (e['date_obj'] - today).days <= 15 
+                            and e['type'] == 'asueto']
+        
+        # Próximas Evaluaciones (15 días)
+        if upcoming_evaluations:
             lines.extend([
                 "📆 Próximas Evaluaciones",
                 "───────────────────────────────────────────────────────────",
             ])
             
             # Sort by date
-            evaluations.sort(key=lambda x: x['date_obj'])
+            upcoming_evaluations.sort(key=lambda x: x['date_obj'])
             
-            for evt in evaluations[:10]:
+            for evt in upcoming_evaluations[:15]:
                 emoji = get_emoji_for_event(evt['type'], evt['title'])
-                tipo = "Evaluación" if evt['type'] == 'examen' else "Entrega"
-                # Comparar solo fechas (sin hora/timezone)
-                evt_date = evt['date_obj'].date()
-                today_date = today.date()
-                days_left = (evt_date - today_date).days
-                
-                materia = evt['materia'] if evt['materia'] != 'No especificada' else tipo
-                
-                lines.append(f"{emoji} {evt['date']} ({days_left} días) - {materia}")
-                
-                # Show title detail if available and different
-                if evt['title'] and evt['title'] != materia and len(evt['title']) > 5:
-                    title_short = truncate_text(evt['title'], 40)
-                    lines.append(f"   └─ {title_short}")
+                title_original = evt['title']
+                # Usar la categoría exacta del calendario
+                categoria = evt.get('categoria', evt['type'].capitalize())
+                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
             
             lines.append("")
         
-        # HOLIDAYS/ASUETOS
-        if holidays:
+        # Asuetos y Feriados (15 días)
+        if upcoming_holidays:
             lines.extend([
                 "📅 Asuetos y Feriados",
                 "───────────────────────────────────────────────────────────",
             ])
             
-            for evt in holidays:
+            for evt in upcoming_holidays[:15]:
                 emoji = get_emoji_for_event(evt['type'], evt['title'])
-                days_left = (evt['date_obj'] - today).days
-                title_short = truncate_text(evt['title'], 40)
-                lines.append(f"{emoji} {evt['date']} (en {days_left} días) - {title_short}")
+                title_original = evt['title']
+                categoria = evt.get('categoria', evt['type'].capitalize())
+                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
             
             lines.append("")
         
-        # OTHER EVENTS (if any)
-        if other_events:
-            other_urgent = [e for e in other_events if 0 <= (e['date_obj'] - today).days <= 30]
-            if other_urgent:
-                lines.extend([
-                    "📋 Otros Eventos Importantes",
-                    "───────────────────────────────────────────────────────────",
-                ])
-                
-                for evt in other_events[:5]:
-                    emoji = get_emoji_for_event(evt['type'], evt['title'])
-                    days_left = (evt['date_obj'] - today).days
-                    materia = evt['materia'] if evt['materia'] != 'No especificada' else ''
-                    title_short = truncate_text(evt['title'], 35)
-                    
-                    if materia:
-                        lines.append(f"{emoji} {evt['date']} - {materia}: {title_short}")
-                    else:
-                        lines.append(f"{emoji} {evt['date']} - {title_short}")
-                
-                lines.append("")
+        # Otros Eventos (15 días) - Conmemoraciones, Calendario Académico, Otros
+        upcoming_other = [e for e in calendar_events 
+                         if 0 <= (e['date_obj'] - today).days <= 15 
+                         and e['categoria'] not in ['Entregas', 'Examen', 'Feriados y Asuetos']]
         
-        # ACADEMIC MESSAGES (filtered and grouped by materia)
-        if messages:
+        if upcoming_other:
             lines.extend([
-                "💬 Mensajes Académicos Recientes (últimos 15 días)",
+                "📋 Otros Eventos",
                 "───────────────────────────────────────────────────────────",
             ])
             
-            # Group by materia
-            by_materia = {}
-            for msg in messages:
-                materia = msg.get('materia', 'General')
-                if materia not in by_materia:
-                    by_materia[materia] = []
-                by_materia[materia].append(msg)
-            
-            # Show top 2 messages per materia
-            for materia, msgs in sorted(by_materia.items())[:6]:
-                lines.append(f"\n📌 {materia}")
-                for msg in msgs[:2]:
-                    date_short = msg['date'].split(' ')[0] if ' ' in msg['date'] else msg['date']
-                    content_short = truncate_text(msg['content'], 55)
-                    source_icon = '💬' if msg.get('source') == 'pizarron' else '✉️'
-                    lines.append(f"   {source_icon} {date_short}: {content_short}")
-                
-                if len(msgs) > 2:
-                    lines.append(f"   ... y {len(msgs) - 2} mensajes más")
+            for evt in upcoming_other[:15]:
+                emoji = get_emoji_for_event(evt['type'], evt['title'])
+                title_original = evt['title']
+                categoria = evt.get('categoria', 'Otros')
+                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
             
             lines.append("")
         
@@ -246,7 +181,7 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
         
         lines.extend([
             "───────────────────────────────────────────────────────────",
-            f"📊 Resumen: {total_evals} evaluaciones | {urgent_count} urgentes | {len(messages)} mensajes",
+            f"📊 Resumen: {total_evals} evaluaciones | {urgent_count} urgentes",
             "═══════════════════════════════════════════════════════════",
         ])
         
