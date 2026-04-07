@@ -13,28 +13,68 @@ import json
 from datetime import datetime, timedelta
 
 
+import unicodedata
+
+def normalize_text(text: str) -> str:
+    """Normalize text: lowercase, remove accents, trim"""
+    text = text.lower().strip()
+    # Remove accents
+    text = ''.join(c for c in unicodedata.normalize('NFKD', text) if unicodedata.category(c) != 'Mn')
+    return text
+
+def match_keywords(text: str, keywords: List[str]) -> bool:
+    """Check if any keyword is in text"""
+    return any(k in text for k in keywords)
+
 async def categorize_events_batch(events: List[Dict]) -> List[str]:
-    """Categorize multiple events using keyword matching (faster and reliable)"""
+    """Categorize events using deterministic keyword matching with strict priority"""
     
     if not events:
         return []
     
-    # Use keyword matching - faster and more reliable for obvious cases
+    # Keyword definitions
+    feriados_keywords = [
+        'feriado', 'asueto', 'no hay clases', 'holiday', 'public holiday', 
+        'bank holiday', 'school closed', 'day off'
+    ]
+    
+    examenes_keywords = [
+        'examen', 'examenes', 'evaluacion', 'prueba', 'parcial', 'final', 'recuperatorio',
+        'exam', 'exams', 'test', 'midterm', 'final exam', 'quiz', 'assessment'
+    ]
+    
+    entregas_keywords = [
+        'entrega', 'entregar', 'tp', 'trabajo practico', 'presentacion', 'vencimiento',
+        'submission', 'deadline', 'due', 'due date', 'assignment', 'project delivery'
+    ]
+    
+    academico_keywords = [
+        'inicio', 'fin', 'comienzo', 'cierre', 'inscripcion', 'reinscripcion',
+        'bimestre', 'trimestre', 'cuatrimestre', 'ciclo lectivo',
+        'start', 'beginning', 'end', 'enrollment', 'registration',
+        'term', 'semester', 'academic year'
+    ]
+    
+    conmemoraciones_keywords = [
+        'iom', 'dia de', 'dia de', 'conmemoracion', 'aniversario',
+        'day of', 'international day', 'world day', 'commemoration'
+    ]
+    
+    # Priority: Feriados > Examenes > Entregas > Academico > Conmemoraciones > Otro
     categories = []
     for evt in events:
-        title_lower = (evt.get('title', '') + " " + evt.get('description', '')).lower()
+        text = normalize_text(evt.get('title', '') + ' ' + evt.get('description', ''))
         
-        # Check for Iom first (conmemoraciones, not feriados)
-        if any(w in title_lower for w in ['iom hashoa', 'iom hazikaron', 'iom haatzmaut']):
+        if match_keywords(text, feriados_keywords):
+            categories.append('Feriados')
+        elif match_keywords(text, examenes_keywords):
+            categories.append('Examenes')
+        elif match_keywords(text, entregas_keywords):
+            categories.append('Entregas')
+        elif match_keywords(text, academico_keywords):
+            categories.append('Academico')
+        elif match_keywords(text, conmemoraciones_keywords):
             categories.append('Conmemoraciones')
-        elif any(w in title_lower for w in ['pesaj', 'asueto', 'vacaciones', 'feriado', 'shavuot', 'rosh', 'yom']):
-            categories.append('Feriado')
-        elif any(w in title_lower for w in ['evaluacion', 'evaluación', 'examen', 'prueba', 'parcial', 'test', 'oral', 'escrito']):
-            categories.append('Examen')
-        elif any(w in title_lower for w in ['entrega', 'assignment', 'tarea', 'tp', 'práctico', 'proyecto', 'informe']):
-            categories.append('Entrega')
-        elif any(w in title_lower for w in ['charla', 'reunion', 'reunión', 'actividad', 'conmemoración', 'conmemoracion']):
-            categories.append('Evento Academico')
         else:
             categories.append('Otro')
     
@@ -1033,10 +1073,11 @@ class OrtCampusScraperV2:
                 
                 # Map to event type for compatibility
                 type_map = {
-                    'Examen': 'examen',
-                    'Entrega': 'entrega', 
-                    'Feriado': 'asueto',
-                    'Evento Academico': 'evento_academico',
+                    'Examenes': 'examen',
+                    'Entregas': 'entrega', 
+                    'Feriados': 'asueto',
+                    'Academico': 'evento_academico',
+                    'Conmemoraciones': 'conmemoracion',
                     'Otro': 'otro'
                 }
                 

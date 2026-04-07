@@ -91,12 +91,11 @@ def parse_report(filepath):
             
             # Usar categoría directamente del reporte (viene de los colores HTML)
             # Mapeo de categorías del scraper a secciones del reporte
-            if categoria in ['examen', 'entrega', 'exámenes', 'entregas']:
+            if categoria in ['examenes', 'entregas']:
                 data['evaluaciones'].append(line_formatted)
-            elif categoria in ['feriado', 'asueto', 'feriados y asuetos']:
+            elif categoria in ['feriados']:
                 data['asuetos'].append(line_formatted)
-            elif categoria in ['conmemoracion', 'conmemoraciones', 'otro', 'otros', 'calendario academico']:
-                # Iom Hashoa, Iom Hazikaron, Iom Haatzmaut ya vienen como Conmemoraciones
+            elif categoria in ['academico', 'conmemoraciones', 'otro']:
                 data['otros'].append(line_formatted)
             else:
                 data['otros'].append(line_formatted)
