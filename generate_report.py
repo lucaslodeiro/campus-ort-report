@@ -113,75 +113,33 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
             "",
         ]
         
-        # Filter events for next 15 days
-        upcoming_evaluations = [e for e in calendar_events 
-                                if 0 <= (e['date_obj'] - today).days <= 15 
-                                and e['type'] in ['examen', 'entrega']]
+        # Get all upcoming events (sorted by date)
+        upcoming_events = [e for e in calendar_events 
+                          if 0 <= (e['date_obj'] - today).days <= 15]
+        upcoming_events.sort(key=lambda x: x['date_obj'])
         
-        upcoming_holidays = [e for e in calendar_events 
-                            if 0 <= (e['date_obj'] - today).days <= 15 
-                            and e['type'] == 'asueto']
-        
-        # Próximas Evaluaciones (15 días)
-        if upcoming_evaluations:
+        # EVENTOS PRÓXIMOS (15 días) - Sección única con categoría LLM
+        if upcoming_events:
             lines.extend([
-                "📆 Próximas Evaluaciones",
+                "📅 PRÓXIMOS EVENTOS (Próximos 15 días)",
                 "───────────────────────────────────────────────────────────",
             ])
             
-            # Sort by date
-            upcoming_evaluations.sort(key=lambda x: x['date_obj'])
-            
-            for evt in upcoming_evaluations[:15]:
+            for evt in upcoming_events:
                 emoji = get_emoji_for_event(evt['type'], evt['title'])
-                title_original = evt['title']
-                # Usar la categoría exacta del calendario
-                categoria = evt.get('categoria', evt['type'].capitalize())
-                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
-            
-            lines.append("")
-        
-        # Asuetos y Feriados (15 días)
-        if upcoming_holidays:
-            lines.extend([
-                "📅 Asuetos y Feriados",
-                "───────────────────────────────────────────────────────────",
-            ])
-            
-            for evt in upcoming_holidays[:15]:
-                emoji = get_emoji_for_event(evt['type'], evt['title'])
-                title_original = evt['title']
-                categoria = evt.get('categoria', evt['type'].capitalize())
-                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
-            
-            lines.append("")
-        
-        # Otros Eventos (15 días) - Conmemoraciones, Calendario Académico, Otros
-        upcoming_other = [e for e in calendar_events 
-                         if 0 <= (e['date_obj'] - today).days <= 15 
-                         and e['categoria'] not in ['Entregas', 'Examen', 'Feriados y Asuetos']]
-        
-        if upcoming_other:
-            lines.extend([
-                "📋 Otros Eventos",
-                "───────────────────────────────────────────────────────────",
-            ])
-            
-            for evt in upcoming_other[:15]:
-                emoji = get_emoji_for_event(evt['type'], evt['title'])
-                title_original = evt['title']
-                categoria = evt.get('categoria', 'Otros')
-                lines.append(f"{emoji} {evt['date']} - {title_original} ({categoria})")
+                title = evt['title']
+                categoria = evt.get('categoria', 'Otro')
+                lines.append(f"{emoji} {evt['date']} - {title} ({categoria})")
             
             lines.append("")
         
         # SUMMARY BAR
         urgent_count = len([e for e in calendar_events if 0 <= (e['date_obj'] - today).days <= 7])
-        total_evals = len(evaluations)
+        total_evals = len([e for e in calendar_events if e['type'] in ['examen', 'entrega']])
         
         lines.extend([
             "───────────────────────────────────────────────────────────",
-            f"📊 Resumen: {total_evals} evaluaciones | {urgent_count} urgentes",
+            f"📊 Resumen: {len(upcoming_events)} eventos | {total_evals} evaluaciones | {urgent_count} urgentes",
             "═══════════════════════════════════════════════════════════",
         ])
         

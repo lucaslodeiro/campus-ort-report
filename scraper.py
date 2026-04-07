@@ -6,10 +6,69 @@ import asyncio
 import os
 import re
 import subprocess
+import urllib.request
 from playwright.async_api import async_playwright
 from typing import Optional, List, Dict
 import json
 from datetime import datetime, timedelta
+
+
+async def categorize_event_with_llm(title: str, description: str = "") -> str:
+    """Categorize an event using LLM based on title and description"""
+    
+    prompt = f"""Analiza este evento escolar y clasificalo en una de estas categorias:
+- Examen: evaluaciones, pruebas, tests, parciales, exámenes orales/escritos
+- Entrega: trabajos prácticos, assignments, tareas, proyectos, informes
+- Feriado: días no laborables, festivos judíos, asuetos
+- Evento Academico: reuniones, charlas, actividades especiales, conmemoraciones
+- Otro: eventos que no encajan en las anteriores
+
+Evento: {title}
+Descripción: {description[:200] if description else 'N/A'}
+
+Responde SOLO con el nombre de la categoría (primera letra mayúscula)."""
+
+    try:
+        # Call Ollama API
+        req = urllib.request.Request(
+            "http://localhost:11434/api/generate",
+            headers={"Content-Type": "application/json"},
+            data=json.dumps({
+                "model": "kimi-k2.5:cloud",
+                "prompt": prompt,
+                "stream": False
+            }).encode('utf-8')
+        )
+        
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            category = result.get('response', '').strip()
+            
+            # Normalize category
+            category_map = {
+                'examen': 'Examen',
+                'entrega': 'Entrega', 
+                'feriado': 'Feriado',
+                'evento academico': 'Evento Academico',
+                'evento académico': 'Evento Academico',
+                'otro': 'Otro'
+            }
+            
+            return category_map.get(category.lower(), category)
+    except Exception as e:
+        # Fallback to keyword matching if LLM fails
+        title_lower = (title + " " + description).lower()
+        
+        if any(w in title_lower for w in ['pesaj', 'asueto', 'feriado', 'iom', 'hashoa', 'haatzmaut', 'hazikaron', 'shavuot', 'rosh', 'yom']):
+            return 'Feriado'
+        elif any(w in title_lower for w in ['evaluacion', 'evaluación', 'examen', 'prueba', 'parcial', 'test', 'oral', 'escrito']):
+            return 'Examen'
+        elif any(w in title_lower for w in ['entrega', 'assignment', 'tarea', 'tp', 'práctico', 'proyecto', 'informe']):
+            return 'Entrega'
+        elif any(w in title_lower for w in ['charla', 'reunion', 'reunión', 'actividad', 'conmemoración', 'conmemoracion']):
+            return 'Evento Academico'
+        else:
+            return 'Otro'
 
 
 def get_credentials_from_1password(item_name: str) -> tuple:
@@ -879,41 +938,18 @@ class OrtCampusScraperV2:
                     desc_match = re.search(r'DESCRIPTION:(.*?)(?:\r?\n[\w-]+:|\Z)', vevent, re.DOTALL)
                     description = desc_match.group(1).replace('\n ', '').strip() if desc_match else ""
                     
-                    # Extract category from description or title
-                    title_lower = summary.lower()
+                    # Categorize using LLM
+                    categoria = await categorize_event_with_llm(summary, description)
                     
-                    # Check for exam/evaluation keywords
-                    exam_keywords = [
-                        'evaluación', 'evaluacion', 'examen', 'prueba', 'parcial', 'test',
-                        'reading', 'listening', 'use of english', 'english test', 'comprehension',
-                        'task', 'oral', 'oral test', 'escrito', 'escrita'
-                    ]
-                    
-                    # Check for delivery/assignment keywords  
-                    delivery_keywords = [
-                        'entrega', 'assignment', 'tarea', 'trabajo práctico', 'tp', 'práctico',
-                        'proyecto', 'informe', 'resumen'
-                    ]
-                    
-                    # Check for holiday keywords
-                    holiday_keywords = [
-                        'pesaj', 'asueto', 'feriado', 'vacaciones', 'iom', 
-                        'hashoa', 'haatzmaut', 'hazikaron', 'shavuot', 'rosh', 'kipur', 
-                        'sucot', 'januca', 'purim'
-                    ]
-                    
-                    if any(word in title_lower for word in delivery_keywords):
-                        evt_type = 'entrega'
-                        categoria = 'Entregas'
-                    elif any(word in title_lower for word in exam_keywords):
-                        evt_type = 'examen'
-                        categoria = 'Examen'
-                    elif any(word in title_lower for word in holiday_keywords):
-                        evt_type = 'asueto'
-                        categoria = 'Feriados y Asuetos'
-                    else:
-                        evt_type = 'otro'
-                        categoria = 'Otros'
+                    # Map to event type for compatibility
+                    type_map = {
+                        'Examen': 'examen',
+                        'Entrega': 'entrega', 
+                        'Feriado': 'asueto',
+                        'Evento Academico': 'evento_academico',
+                        'Otro': 'otro'
+                    }
+                    evt_type = type_map.get(categoria, 'otro')
                     
                     events.append({
                         "date": date_formatted,
