@@ -88,19 +88,16 @@ def parse_report(filepath):
                 titulo = resto
             
             line_formatted = f"{fecha} - {titulo} ({categoria.capitalize()})"
-            titulo_lower = titulo.lower()
             
-            if 'examen' in categoria or 'entrega' in categoria:
+            # Usar categoría directamente del reporte (viene de los colores HTML)
+            # Mapeo de categorías del scraper a secciones del reporte
+            if categoria in ['examen', 'entrega', 'exámenes', 'entregas']:
                 data['evaluaciones'].append(line_formatted)
-            elif 'feriado' in categoria or 'asueto' in categoria or 'asueto' in titulo_lower:
-                # Solo Pesaj son feriados escolares, los Iom son conmemoraciones
-                if any(w in titulo_lower for w in ['pesaj']):
-                    data['asuetos'].append(line_formatted)
-                else:
-                    # Iom Hashoa, Iom Hazikaron, Iom Haatzmaut son conmemoraciones
-                    # Reemplazar (Feriado) por (Conmemoracion)
-                    line_formatted = line_formatted.replace('(Feriado)', '(Conmemoracion)')
-                    data['otros'].append(line_formatted)
+            elif categoria in ['feriado', 'asueto', 'feriados y asuetos']:
+                data['asuetos'].append(line_formatted)
+            elif categoria in ['conmemoracion', 'conmemoraciones', 'otro', 'otros', 'calendario academico']:
+                # Iom Hashoa, Iom Hazikaron, Iom Haatzmaut ya vienen como Conmemoraciones
+                data['otros'].append(line_formatted)
             else:
                 data['otros'].append(line_formatted)
     

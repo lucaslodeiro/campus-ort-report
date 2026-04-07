@@ -24,7 +24,10 @@ async def categorize_events_batch(events: List[Dict]) -> List[str]:
     for evt in events:
         title_lower = (evt.get('title', '') + " " + evt.get('description', '')).lower()
         
-        if any(w in title_lower for w in ['pesaj', 'asueto', 'feriado', 'iom', 'hashoa', 'haatzmaut', 'hazikaron', 'shavuot', 'rosh', 'yom']):
+        # Check for Iom first (conmemoraciones, not feriados)
+        if any(w in title_lower for w in ['iom hashoa', 'iom hazikaron', 'iom haatzmaut']):
+            categories.append('Conmemoraciones')
+        elif any(w in title_lower for w in ['pesaj', 'asueto', 'vacaciones', 'feriado', 'shavuot', 'rosh', 'yom']):
             categories.append('Feriado')
         elif any(w in title_lower for w in ['evaluacion', 'evaluación', 'examen', 'prueba', 'parcial', 'test', 'oral', 'escrito']):
             categories.append('Examen')
