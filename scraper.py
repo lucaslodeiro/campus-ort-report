@@ -882,14 +882,33 @@ class OrtCampusScraperV2:
                     # Extract category from description or title
                     title_lower = summary.lower()
                     
-                    # Determine event type by keywords in title/description
-                    if 'entrega' in title_lower or 'assignment' in title_lower or 'tarea' in title_lower:
+                    # Check for exam/evaluation keywords
+                    exam_keywords = [
+                        'evaluación', 'evaluacion', 'examen', 'prueba', 'parcial', 'test',
+                        'reading', 'listening', 'use of english', 'english test', 'comprehension',
+                        'task', 'oral', 'oral test', 'escrito', 'escrita'
+                    ]
+                    
+                    # Check for delivery/assignment keywords  
+                    delivery_keywords = [
+                        'entrega', 'assignment', 'tarea', 'trabajo práctico', 'tp', 'práctico',
+                        'proyecto', 'informe', 'resumen'
+                    ]
+                    
+                    # Check for holiday keywords
+                    holiday_keywords = [
+                        'pesaj', 'asueto', 'feriado', 'vacaciones', 'iom', 
+                        'hashoa', 'haatzmaut', 'hazikaron', 'shavuot', 'rosh', 'kipur', 
+                        'sucot', 'januca', 'purim'
+                    ]
+                    
+                    if any(word in title_lower for word in delivery_keywords):
                         evt_type = 'entrega'
                         categoria = 'Entregas'
-                    elif any(word in title_lower for word in ['evaluación', 'evaluacion', 'examen', 'prueba', 'parcial', 'test']):
+                    elif any(word in title_lower for word in exam_keywords):
                         evt_type = 'examen'
                         categoria = 'Examen'
-                    elif any(word in title_lower for word in ['pesaj', 'asueto', 'feriado', 'iom', 'hashoa', 'haatzmaut', 'hazikaron']):
+                    elif any(word in title_lower for word in holiday_keywords):
                         evt_type = 'asueto'
                         categoria = 'Feriados y Asuetos'
                     else:
