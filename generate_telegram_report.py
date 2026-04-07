@@ -98,6 +98,8 @@ def parse_report(filepath):
                     data['asuetos'].append(line_formatted)
                 else:
                     # Iom Hashoa, Iom Hazikaron, Iom Haatzmaut son conmemoraciones
+                    # Reemplazar (Feriado) por (Conmemoracion)
+                    line_formatted = line_formatted.replace('(Feriado)', '(Conmemoracion)')
                     data['otros'].append(line_formatted)
             else:
                 data['otros'].append(line_formatted)
