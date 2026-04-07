@@ -224,14 +224,16 @@ def main():
     # Enviar mensaje por Telegram
     print("5. Enviando mensaje por Telegram...")
     try:
-        # Guardar mensaje en archivo temporal para leerlo con --message
+        # Guardar mensaje en archivo temporal
         msg_file = "/tmp/telegram_msg.txt"
         with open(msg_file, 'w') as f:
             f.write(mensaje)
         
-        # Intentar usar openclaw si está disponible
+        # Usar shell con el mensaje leído del archivo
+        cmd = f'/usr/local/bin/openclaw message send -t 7527142707 --message "$(cat {msg_file})"'
         result = subprocess.run(
-            ["openclaw", "message", "send", "-t", "7527142707", "--message", f"@{msg_file}"],
+            cmd,
+            shell=True,
             capture_output=True,
             text=True,
             timeout=30
@@ -240,8 +242,6 @@ def main():
             print("✓ Mensaje enviado por Telegram")
         else:
             print(f"⚠ No se pudo enviar automáticamente: {result.stderr}")
-    except FileNotFoundError:
-        print("⚠ openclaw no disponible, mensaje guardado en archivo")
     except Exception as e:
         print(f"⚠ Error enviando mensaje: {e}")
     
