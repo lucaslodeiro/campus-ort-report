@@ -13,62 +13,29 @@ import json
 from datetime import datetime, timedelta
 
 
-async def categorize_event_with_llm(title: str, description: str = "") -> str:
-    """Categorize an event using LLM based on title and description"""
+async def categorize_events_batch(events: List[Dict]) -> List[str]:
+    """Categorize multiple events using keyword matching (faster and reliable)"""
     
-    prompt = f"""Analiza este evento escolar y clasificalo en una de estas categorias:
-- Examen: evaluaciones, pruebas, tests, parciales, exámenes orales/escritos
-- Entrega: trabajos prácticos, assignments, tareas, proyectos, informes
-- Feriado: días no laborables, festivos judíos, asuetos
-- Evento Academico: reuniones, charlas, actividades especiales, conmemoraciones
-- Otro: eventos que no encajan en las anteriores
-
-Evento: {title}
-Descripción: {description[:200] if description else 'N/A'}
-
-Responde SOLO con el nombre de la categoría (primera letra mayúscula)."""
-
-    try:
-        # Call Ollama API
-        req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            headers={"Content-Type": "application/json"},
-            data=json.dumps({
-                "model": "kimi-k2.5:cloud",
-                "prompt": prompt,
-                "stream": False
-            }).encode('utf-8')
-        )
-        
-        with urllib.request.urlopen(req, timeout=30) as response:
-            result = json.loads(response.read().decode('utf-8'))
-            category = result.get('response', '').strip()
-            
-            # Normalize category
-            category_map = {
-                'examen': 'Examen',
-                'entrega': 'Entrega', 
-                'feriado': 'Feriado',
-                'evento academico': 'Evento Academico',
-                'evento académico': 'Evento Academico',
-                'otro': 'Otro'
-            }
-            
-            return category_map.get(category.lower(), category)
-    except Exception as e:
-        # Fallback to keyword matching if LLM fails
-        title_lower = (title + " " + description).lower()
+    if not events:
+        return []
+    
+    # Use keyword matching - faster and more reliable for obvious cases
+    categories = []
+    for evt in events:
+        title_lower = (evt.get('title', '') + " " + evt.get('description', '')).lower()
         
         if any(w in title_lower for w in ['pesaj', 'asueto', 'feriado', 'iom', 'hashoa', 'haatzmaut', 'hazikaron', 'shavuot', 'rosh', 'yom']):
-            return 'Feriado'
+            categories.append('Feriado')
         elif any(w in title_lower for w in ['evaluacion', 'evaluación', 'examen', 'prueba', 'parcial', 'test', 'oral', 'escrito']):
-            return 'Examen'
+            categories.append('Examen')
         elif any(w in title_lower for w in ['entrega', 'assignment', 'tarea', 'tp', 'práctico', 'proyecto', 'informe']):
-            return 'Entrega'
+            categories.append('Entrega')
         elif any(w in title_lower for w in ['charla', 'reunion', 'reunión', 'actividad', 'conmemoración', 'conmemoracion']):
-            return 'Evento Academico'
+            categories.append('Evento Academico')
         else:
-            return 'Otro'
+            categories.append('Otro')
+    
+    return categories
 
 
 def get_credentials_from_1password(item_name: str) -> tuple:
@@ -258,6 +225,110 @@ class OrtCampusScraperV2:
         except Exception as e:
             print(f"✗ Login error: {e}")
             return False
+
+    async def get_dashboard_tareas(self) -> List[Dict]:
+        """Scrape dashboard for pending assignments/tasks"""
+        tareas = []
+        try:
+            print("\n📋 Scraping dashboard for tasks...")
+            await self.page.goto("https://campus.ort.edu.ar/dashboard/")
+            await asyncio.sleep(5)
+            
+            # Get HTML content
+            html = await self.page.content()
+            
+            # Find all conclusionEstado elements with their positions
+            conclusion_pattern = r'<p[^>]*id="conclusionEstado-(\d+)"[^>]*>'
+            conclusions = []
+            for match in re.finditer(conclusion_pattern, html):
+                try:
+                    pos = match.start()
+                    estado_id = match.group(1)
+                    # Get the text content after this element - look for the closing </p>
+                    start_content = match.end()
+                    end_pos = html.find('</p>', start_content)
+                    if end_pos > 0:
+                        # Extract content between <p> and </p>
+                        content = html[start_content:end_pos]
+                        # Remove HTML tags
+                        text = re.sub(r'<[^>]+\u003e', ' ', content).strip()
+                        text = re.sub(r'\s+', ' ', text)
+                        if text:
+                            conclusions.append((pos, estado_id, text))
+                            print(f"   DEBUG conclusion {estado_id}: {text[:80]}...")
+                except Exception as e:
+                    continue
+            
+            print(f"   Found {len(conclusions)} conclusion elements")
+            
+            # Find all materia titles with their positions
+            materia_pattern = r'<p[^>]*class="[^"]*dsb[^"]*bold[^"]*"[^>]*>([^<]+)</p>'
+            materias = []
+            for match in re.finditer(materia_pattern, html):
+                pos = match.start()
+                nombre = match.group(1).strip()
+                materias.append((pos, nombre))
+            
+            print(f"   Found {len(materias)} materia titles")
+            
+            # Match each conclusion with its nearest materia (the one just before it)
+            for conclusion in conclusions:
+                try:
+                    conclusion_pos, estado_id, text = conclusion
+                    
+                    # Check if this conclusion has "Ya entregaste"
+                    if "ya entregaste" not in text.lower():
+                        continue
+                    
+                    # Parse the numbers
+                    match = re.search(r'(\d+)\s*<strong>\s*de\s*</strong>\s*(\d+)', text, re.IGNORECASE)
+                    if not match:
+                        match = re.search(r'(\d+)\s+de\s+(\d+)', text, re.IGNORECASE)
+                    if not match:
+                        continue
+                    
+                    completed = int(match.group(1))
+                    total = int(match.group(2))
+                    pending = total - completed
+                    
+                    if pending > 0:
+                        # Find the closest materia before this conclusion
+                        materia_nombre = f"Materia {estado_id}"
+                        closest_materia = None
+                        closest_dist = float('inf')
+                        
+                        for materia_pos, materia_name in materias:
+                            if materia_pos < conclusion_pos:
+                                dist = conclusion_pos - materia_pos
+                                if dist < closest_dist:
+                                    closest_dist = dist
+                                    closest_materia = materia_name
+                        
+                        if closest_materia:
+                            materia_nombre = closest_materia
+                        
+                        tareas.append({
+                            "materia": materia_nombre,
+                            "pending": pending,
+                            "completed": completed,
+                            "total": total,
+                            "status_text": f"Ya entregaste {completed} de {total}"
+                        })
+                        print(f"   📌 {materia_nombre}: {pending} pendiente(s)")
+                        
+                except Exception as e:
+                    continue
+            
+            print(f"   ✓ Found {len(tareas)} subjects with pending tasks")
+            return tareas
+            
+        except Exception as e:
+            print(f"✗ Error scraping dashboard: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+            traceback.print_exc()
+            return []
 
     async def get_all_groups(self) -> List[Dict]:
         """Get all groups with their correct IDs"""
@@ -902,6 +973,8 @@ class OrtCampusScraperV2:
             
             print(f"   ✓ Found {len(vevents)} events in iCal")
             
+            # First pass: collect all events without categorization
+            raw_events = []
             for vevent in vevents:
                 try:
                     # Extract summary (title)
@@ -938,31 +1011,45 @@ class OrtCampusScraperV2:
                     desc_match = re.search(r'DESCRIPTION:(.*?)(?:\r?\n[\w-]+:|\Z)', vevent, re.DOTALL)
                     description = desc_match.group(1).replace('\n ', '').strip() if desc_match else ""
                     
-                    # Categorize using LLM
-                    categoria = await categorize_event_with_llm(summary, description)
-                    
-                    # Map to event type for compatibility
-                    type_map = {
-                        'Examen': 'examen',
-                        'Entrega': 'entrega', 
-                        'Feriado': 'asueto',
-                        'Evento Academico': 'evento_academico',
-                        'Otro': 'otro'
-                    }
-                    evt_type = type_map.get(categoria, 'otro')
-                    
-                    events.append({
+                    raw_events.append({
                         "date": date_formatted,
                         "date_obj": event_date,
                         "title": summary[:100],
-                        "materia": "No especificada",
-                        "type": evt_type,
-                        "categoria": categoria,
-                        "detalle": description
+                        "description": description
                     })
                     
                 except Exception as e:
                     continue
+            
+            print(f"   ✓ Collected {len(raw_events)} events for categorization")
+            
+            # Second pass: categorize all events in batch with LLM
+            if raw_events:
+                print(f"   Categorizing {len(raw_events)} events with LLM (batch mode)...")
+                categories = await categorize_events_batch(raw_events)
+                
+                # Map to event type for compatibility
+                type_map = {
+                    'Examen': 'examen',
+                    'Entrega': 'entrega', 
+                    'Feriado': 'asueto',
+                    'Evento Academico': 'evento_academico',
+                    'Otro': 'otro'
+                }
+                
+                for i, evt in enumerate(raw_events):
+                    categoria = categories[i] if i < len(categories) else 'Otro'
+                    evt_type = type_map.get(categoria, 'otro')
+                    
+                    events.append({
+                        "date": evt["date"],
+                        "date_obj": evt["date_obj"],
+                        "title": evt["title"],
+                        "materia": "No especificada",
+                        "type": evt_type,
+                        "categoria": categoria,
+                        "detalle": evt["description"]
+                    })
             
             # Sort by date
             events.sort(key=lambda x: x['date_obj'])

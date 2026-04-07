@@ -7,12 +7,16 @@ Genera reportes de Benja y Valen y los formatea para envío por Telegram
 import subprocess
 import sys
 import re
+import json
+import os
 from datetime import datetime
 from pathlib import Path
 
 SKILL_PATH = "/usr/local/lib/node_modules/openclaw/skills/campus-ort-report"
 REPORT_BENJA = "/tmp/reporte_academico_benja.txt"
 REPORT_VALEN = "/tmp/reporte_academico_valen.txt"
+TASKS_BENJA = "/tmp/tareas_benja.json"
+TASKS_VALEN = "/tmp/tareas_valen.json"
 
 def run_report(student):
     """Ejecutar script de reporte para un estudiante"""
@@ -43,8 +47,18 @@ def parse_report(filepath):
         'curso': '',
         'evaluaciones': [],
         'asuetos': [],
-        'otros': []
+        'otros': [],
+        'tareas': []
     }
+    
+    # Cargar tareas desde JSON si existe
+    tasks_file = filepath.replace('reporte_academico_', 'tareas_').replace('.txt', '.json')
+    if os.path.exists(tasks_file):
+        try:
+            with open(tasks_file, 'r') as f:
+                data['tareas'] = json.load(f)
+        except:
+            pass
     
     # Extraer nombre y curso
     nombre_match = re.search(r'📚\s+(\w+)\s+-\s+(.+?)\n', content)
@@ -52,40 +66,41 @@ def parse_report(filepath):
         data['nombre'] = nombre_match.group(1)
         data['curso'] = nombre_match.group(2).strip()
     
-    # Extraer evaluaciones (nuevo formato: fecha - título (categoría))
-    eval_section = re.search(r'📆 Próximas Evaluaciones.*?\n─+\n(.*?)(?=\n📅|\n📋|$)', content, re.DOTALL)
-    if eval_section:
-        for line in eval_section.group(1).split('\n'):
-            line = line.strip()
-            # Buscar líneas con emoji de evaluación
-            if line.startswith('📝'):
-                # Formato: 📝 10/04/2026 - Evaluación de Historia (Examen)
-                item = re.sub(r'^[📝🏖️📌]\s*', '', line)
-                data['evaluaciones'].append(item)
-    
-    # Extraer asuetos (nuevo formato: 🏖️ fecha - título (categoría))
-    asueto_section = re.search(r'📅 Asuetos y Feriados.*?\n─+\n(.*?)(?=\n📋|$)', content, re.DOTALL)
-    if asueto_section:
-        asuetos_text = []
-        for line in asueto_section.group(1).split('\n'):
-            line = line.strip()
-            if line.startswith('🏖️'):
-                # Formato: 🏖️ 07/04/2026 - Víspera 7mo día Pesaj (Asueto)
-                item = line
-                asuetos_text.append(item)
-        data['asuetos'] = asuetos_text
-    
-    # Extraer otros eventos (nuevo formato: 📋 fecha - título (categoría))
-    otros_section = re.search(r'📋 Otros Eventos.*?\n─+\n(.*?)(?=\n─+|$)', content, re.DOTALL)
-    if otros_section:
-        otros_text = []
-        for line in otros_section.group(1).split('\n'):
-            line = line.strip()
-            if line and (line.startswith('📌') or line.startswith('🏖️') or line.startswith('📝')):
-                # Formato: 📌 10/04/2026 - Literature Assignmen... (Otros)
-                item = re.sub(r'^[📌🏖️📝]\s*', '', line)
-                otros_text.append(item)
-        data['otros'] = otros_text
+    # Extraer líneas con eventos (buscar por patrón de fecha)
+    for line in content.split('\n'):
+        line = line.strip()
+        
+        # Buscar líneas con formato: emoji fecha - título (categoría)
+        # El emoji puede ser 🏖️ (beach), 📚 (books), 📝 (memo), 📌 (pushpin)
+        # Usar patrón más simple que busque la estructura fecha - titulo (categoria)
+        match = re.search(r'(\d{2}/\d{2}/\d{4})\s+-\s+(.+)', line)
+        if match and any(emoji in line for emoji in ['🏖', '📚', '📝', '📌']):
+            fecha = match.group(1)
+            resto = match.group(2)
+            
+            # Extraer categoría del final si existe
+            cat_match = re.search(r'\s*\(([^)]+)\)$', resto)
+            if cat_match:
+                categoria = cat_match.group(1).lower()
+                titulo = resto[:cat_match.start()].strip()
+            else:
+                categoria = 'otro'
+                titulo = resto
+            
+            line_formatted = f"{fecha} - {titulo} ({categoria.capitalize()})"
+            titulo_lower = titulo.lower()
+            
+            if 'examen' in categoria or 'entrega' in categoria:
+                data['evaluaciones'].append(line_formatted)
+            elif 'feriado' in categoria or 'asueto' in categoria or 'asueto' in titulo_lower:
+                # Solo Pesaj son feriados escolares, los Iom son conmemoraciones
+                if any(w in titulo_lower for w in ['pesaj']):
+                    data['asuetos'].append(line_formatted)
+                else:
+                    # Iom Hashoa, Iom Hazikaron, Iom Haatzmaut son conmemoraciones
+                    data['otros'].append(line_formatted)
+            else:
+                data['otros'].append(line_formatted)
     
     return data
 
@@ -107,6 +122,12 @@ def format_telegram_message(benja_data, valen_data):
     # BENJA
     mensaje += f"\n**BENJA** - {benja_data['curso']}\n"
     
+    # TAREAS PENDIENTES
+    if benja_data['tareas']:
+        mensaje += "\n📚 Tareas Pendientes:\n\n"
+        for tarea in benja_data['tareas'][:10]:
+            mensaje += f"• {tarea['materia']}: {tarea['pending']} pendiente(s)\n"
+    
     mensaje += "\n📆 Próximas Evaluaciones:\n\n"
     for eval in benja_data['evaluaciones'][:15]:
         mensaje += f"• {eval}\n"
@@ -125,6 +146,12 @@ def format_telegram_message(benja_data, valen_data):
     mensaje += "\n───\n"
     mensaje += f"\n**VALEN** - {valen_data['curso']}\n"
     
+    # TAREAS PENDIENTES
+    if valen_data['tareas']:
+        mensaje += "\n📚 Tareas Pendientes:\n\n"
+        for tarea in valen_data['tareas'][:10]:
+            mensaje += f"• {tarea['materia']}: {tarea['pending']} pendiente(s)\n"
+    
     mensaje += "\n📆 Próximas Evaluaciones:\n\n"
     for eval in valen_data['evaluaciones'][:15]:
         mensaje += f"• {eval}\n"
@@ -139,8 +166,12 @@ def format_telegram_message(benja_data, valen_data):
         for otro in valen_data['otros'][:15]:
             mensaje += f"• {otro}\n"
     
+    # Contar total de tareas pendientes
+    total_tareas_benja = sum(t['pending'] for t in benja_data['tareas'])
+    total_tareas_valen = sum(t['pending'] for t in valen_data['tareas'])
+    
     mensaje += "\n───\n"
-    mensaje += f"\n📊 Resumen: Benja: {len(benja_data['evaluaciones'])} eval, {len(benja_data['asuetos'])} asuetos, {len(benja_data['otros'])} otros | Valen: {len(valen_data['evaluaciones'])} eval, {len(valen_data['asuetos'])} asuetos, {len(valen_data['otros'])} otros"
+    mensaje += f"\n📊 Resumen: Benja: {len(benja_data['evaluaciones'])} eval, {len(benja_data['asuetos'])} asuetos, {total_tareas_benja} tareas pendientes | Valen: {len(valen_data['evaluaciones'])} eval, {len(valen_data['asuetos'])} asuetos, {total_tareas_valen} tareas pendientes"
     
     return mensaje
 
@@ -189,6 +220,31 @@ def main():
         f.write(mensaje)
     
     print(f"✓ Mensaje guardado en: {output_file}")
+    
+    # Enviar mensaje por Telegram
+    print("5. Enviando mensaje por Telegram...")
+    try:
+        # Guardar mensaje en archivo temporal para leerlo con --message
+        msg_file = "/tmp/telegram_msg.txt"
+        with open(msg_file, 'w') as f:
+            f.write(mensaje)
+        
+        # Intentar usar openclaw si está disponible
+        result = subprocess.run(
+            ["openclaw", "message", "send", "-t", "7527142707", "--message", f"@{msg_file}"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode == 0:
+            print("✓ Mensaje enviado por Telegram")
+        else:
+            print(f"⚠ No se pudo enviar automáticamente: {result.stderr}")
+    except FileNotFoundError:
+        print("⚠ openclaw no disponible, mensaje guardado en archivo")
+    except Exception as e:
+        print(f"⚠ Error enviando mensaje: {e}")
+    
     print()
     print("=" * 50)
     print("MENSAJE PARA TELEGRAM:")

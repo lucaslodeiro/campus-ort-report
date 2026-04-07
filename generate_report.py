@@ -84,12 +84,15 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
         
         print("✓ Login successful\n")
         
-        # Messages extraction disabled - only calendar events reported
-        
         # Extract calendar automatically (using iCal feed)
         print("Extracting calendar...")
         calendar_events = await scraper.get_calendar_ical()
         print(f"✓ Found {len(calendar_events)} calendar events\n")
+        
+        # Extract tasks from dashboard
+        print("Extracting tasks from dashboard...")
+        dashboard_tareas = await scraper.get_dashboard_tareas()
+        print(f"✓ Found {len(dashboard_tareas)} subjects with pending tasks\n")
         
         # Detect grade from username prefix
         grade_info = "7° año GA7E" if username.startswith("53") else "2° año NE2N"
@@ -133,13 +136,24 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
             
             lines.append("")
         
+        # TASKS SECTION (from dashboard)
+        if dashboard_tareas:
+            lines.extend([
+                "📚 TAREAS PENDIENTES (Dashboard)",
+                "───────────────────────────────────────────────────────────",
+            ])
+            for tarea in dashboard_tareas:
+                lines.append(f"📌 {tarea['materia']}: {tarea['pending']} pendiente(s) ({tarea['completed']}/{tarea['total']} entregados)")
+            lines.append("")
+        
         # SUMMARY BAR
         urgent_count = len([e for e in calendar_events if 0 <= (e['date_obj'] - today).days <= 7])
         total_evals = len([e for e in calendar_events if e['type'] in ['examen', 'entrega']])
+        total_pending_tasks = sum(t['pending'] for t in dashboard_tareas)
         
         lines.extend([
             "───────────────────────────────────────────────────────────",
-            f"📊 Resumen: {len(upcoming_events)} eventos | {total_evals} evaluaciones | {urgent_count} urgentes",
+            f"📊 Resumen: {len(upcoming_events)} eventos | {total_evals} evaluaciones | {total_pending_tasks} tareas pendientes | {urgent_count} urgentes",
             "═══════════════════════════════════════════════════════════",
         ])
         
@@ -150,8 +164,14 @@ async def generate_academic_report(student_name: str, days_back: int = 15):
         with open(output_file, "w", encoding="utf-8") as f:
             f.write(report)
         
+        # Save tasks data for Telegram parser
+        tasks_file = f"/tmp/tareas_{student_name.lower()}.json"
+        with open(tasks_file, "w", encoding="utf-8") as f:
+            json.dump(dashboard_tareas, f, ensure_ascii=False, indent=2)
+        
         print(report)
         print(f"\n✅ Report saved to: {output_file}")
+        print(f"✅ Tasks saved to: {tasks_file}")
         return True
         
     except Exception as e:
