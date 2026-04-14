@@ -1,12 +1,12 @@
 # campus-ort-report
 
-Generate academic reports for ORT Campus students. Extracts calendar events using iCal feed with LLM-based categorization.
+Generate academic reports for ORT Campus students. Extracts calendar events using iCal feed with keyword‑based categorization.
 
 ## Description
 
 This skill generates comprehensive academic reports for students using ORT Campus Virtual. It extracts:
-- Calendar events (exams, deliveries, holidays, academic events) - **via iCal feed with LLM categorization**
-- Event categorization powered by Ollama LLM (Examen, Entrega, Feriado, Evento Academico, Otro)
+- Calendar events (exams, deliveries, holidays, academic events) - **via iCal feed with deterministic keyword categorization**
+- Event categorization using keyword matching (Examenes, Entregas, Feriados, Academico, Conmemoraciones, Otro)
 - Unified event list for next 15 days
 
 ## Prerequisites
@@ -14,7 +14,7 @@ This skill generates comprehensive academic reports for students using ORT Campu
 - 1Password CLI (`op`) configured with service account token
 - The token must be available as `OP_SERVICE_ACCOUNT_TOKEN` environment variable
 - 1Password vault "Klaw" with credentials for each student
-- Ollama running locally with `kimi-k2.5:cloud` model
+- Python 3.9+ with Playwright installed (see Dependencies)
 
 ## 1Password Setup
 
@@ -66,37 +66,33 @@ The skill navigates to the calendar and extracts the iCal feed:
 4. Download full iCal feed (typically 1000+ events)
 5. Parse events for next 15 days
 
-### LLM-Based Event Categorization
-Each event is categorized using Ollama LLM based on title and description:
+### Keyword‑Based Event Categorization
+Each event is categorized using deterministic keyword matching based on title and description:
 
-**Categories:**
-- **Examen**: evaluaciones, pruebas, tests, parciales, reading, listening, oral, escrito
-- **Entrega**: assignments, tareas, trabajos prácticos, proyectos, informes
-- **Feriado**: días no laborables, festivos judíos (Pesaj, Iom Hashoa, etc.)
-- **Evento Academico**: reuniones, charlas, actividades especiales, conmemoraciones
+**Categories (priority order):**
+- **Feriados**: días no laborables, festivos judíos (Pesaj, Iom Hashoa, etc.), asuetos
+- **Examenes**: evaluaciones, pruebas, tests, parciales, reading, listening, oral, escrito
+- **Entregas**: assignments, tareas, trabajos prácticos, proyectos, informes
+- **Academico**: inicio/fin de ciclo, inscripciones, períodos académicos
+- **Conmemoraciones**: días conmemorativos (Iom Hazikaron, etc.)
 - **Otro**: eventos que no encajan en las categorías anteriores
 
-**LLM Prompt:**
-```
-Analiza este evento escolar y clasificalo en una de estas categorias:
-- Examen: evaluaciones, pruebas, tests, parciales, exámenes orales/escritos
-- Entrega: trabajos prácticos, assignments, tareas, proyectos, informes
-- Feriado: días no laborables, festivos judíos, asuetos
-- Evento Academico: reuniones, charlas, actividades especiales, conmemoraciones
-- Otro: eventos que no encajan en las anteriores
-
-Evento: {title}
-Descripción: {description}
-
-Responde SOLO con el nombre de la categoría.
+**Keyword Matching Logic:**
+```python
+# Priority: Feriados > Examenes > Entregas > Academico > Conmemoraciones > Otro
+if any(keyword in text for keyword in feriados_keywords):
+    category = "Feriados"
+elif any(keyword in text for keyword in examenes_keywords):
+    category = "Examenes"
+# ... etc.
 ```
 
 ## Dependencies
 
-- Playwright
+- Playwright (for browser automation)
 - Python 3.9+
 - 1Password CLI (`op`)
-- Ollama (local LLM server)
+- No external LLM required – categorization uses keyword matching
 
 ## Output
 
@@ -135,9 +131,9 @@ Reports are saved to:
 📊 Resumen: {Estudiante}: {N} eval, {N} asuetos, {N} otros | {Estudiante}: {N} eval, {N} asuetos, {N} otros
 ```
 
-**Ejemplo real:**
+**Ejemplo real (basado en salida actual):**
 ```
-📚 Reporte Campus ORT - Martes 7/4/2026
+📚 Reporte Campus ORT - Sábado 11/4/2026
 
 ───
 
@@ -145,25 +141,21 @@ Reports are saved to:
 
 📆 Próximas Evaluaciones:
 
-• 10/04/2026 - Evaluación de Historia (Examen)
-• 10/04/2026 - Literature Assignment -Pili- (Entrega)
-• 13/04/2026 - Evaluación Tecnología (Examen)
-• 15/04/2026 - Evaluación de Fuentes (Examen)
-• 15/04/2026 - Evaluación de matemática (Examen)
-• 16/04/2026 - Listening Test -Pili- (Examen)
-• 16/04/2026 - Listening Test (Benyakar) (Examen)
-• 17/04/2026 - Use of English test -Pili- (Examen)
-• 17/04/2026 - English Test Units 1-2 M.Laura (Examen)
-• 17/04/2026 - Use of English (Benyakar) (Examen)
-• 20/04/2026 - Evaluación De Etica (Examen)
+• 13/04/2026 - Evaluación Tecnología (Examenes)
+• 15/04/2026 - Evaluación de Fuentes (Examenes)
+• 15/04/2026 - Evaluación de matemática (Examenes)
+• 16/04/2026 - Listening Test -Pili- (Examenes)
+• 16/04/2026 - Listening Test (Benyakar) (Examenes)
+• 17/04/2026 - Use of English test -Pili- (Examenes)
+• 17/04/2026 - English Test Units 1-2 M.Laura (Examenes)
+• 20/04/2026 - Evaluación De Etica (Examenes)
+• 27/04/2026 - Evaluación Biología (Examenes)
 
 📅 Asuetos y Feriados:
 
-• 🏖️ 08/04/2026 - Pesaj 7mo día - Asueto (Feriado)
-• 🏖️ 09/04/2026 - Pesaj 8vo día - Asueto (Feriado)
-• 🏖️ 14/04/2026 - Iom Hashoa (Feriado)
-• 🏖️ 21/04/2026 - Iom Hazikaron (Evento Academico)
-• 🏖️ 22/04/2026 - Iom Haatzmaut (Feriado)
+• 🏖️ 14/04/2026 - Iom Hashoa (Conmemoraciones)
+• 🏖️ 21/04/2026 - Iom Hazikaron (Conmemoraciones)
+• 🏖️ 22/04/2026 - Iom Haatzmaut (Conmemoraciones)
 
 📋 Otros Eventos:
 
@@ -173,28 +165,35 @@ Reports are saved to:
 
 **VALEN** - 7° año GA7E
 
+📚 Tareas Pendientes:
+
+• Taller De Diseño, Arte, Tecnologia Y Comunicacion 7   1-2-91 - 2026 -  GA7E - ALM: 1 pendiente(s)
+
 📆 Próximas Evaluaciones:
 
-• 15/04/2026 - Evaluación de Matemática (Examen)
-• 16/04/2026 - READING TEST (ENGLISH T4 Prof. Mariana) (Examen)
-• 16/04/2026 - Evaluación de Sociales (U1) (Examen)
-• 17/04/2026 - Evaluación CyT (Examen)
-• 20/04/2026 - Reading task (T3 Paula) (Examen)
-• 20/04/2026 - UE test shirly. (Examen)
-• 22/04/2026 - English test (T3 Paula) (Examen)
-• 22/04/2026 - Reading comprehension test. Shirly (Examen)
+• 16/04/2026 - READING TEST (ENGLISH T4 Prof. Mariana) (Examenes)
+• 16/04/2026 - Evaluación de Sociales (U1) (Examenes)
+• 17/04/2026 - Evaluación CyT (Examenes)
+• 20/04/2026 - UE test shirly. (Examenes)
+• 22/04/2026 - Evaluación de Matemática (Examenes)
+• 22/04/2026 - English test (T3 Paula) (Examenes)
+• 22/04/2026 - Reading comprehension test. Shirly (Examenes)
+• 23/04/2026 - Evaluación de Cs. Naturales 1er Bimestre (Examenes)
+• 27/04/2026 - Examen Moby Dick (Examenes)
 
 📅 Asuetos y Feriados:
 
-• 🏖️ 08/04/2026 - Pesaj 7mo día - Asueto (Feriado)
-• 🏖️ 09/04/2026 - Pesaj 8vo día - Asueto (Feriado)
-• 🏖️ 14/04/2026 - Iom Hashoa (Feriado)
-• 🏖️ 21/04/2026 - Iom Hazikaron (Evento Academico)
-• 🏖️ 22/04/2026 - Iom Haatzmaut (Feriado)
+• 🏖️ 14/04/2026 - Iom Hashoa (Conmemoraciones)
+• 🏖️ 21/04/2026 - Iom Hazikaron (Conmemoraciones)
+• 🏖️ 22/04/2026 - Iom Haatzmaut (Conmemoraciones)
+
+📋 Otros Eventos:
+
+• 20/04/2026 - Reading task (T3 Paula) (Otro)
 
 ───
 
-📊 Resumen: Benja: 11 eval, 5 asuetos, 1 otros | Valen: 8 eval, 5 asuetos, 0 otros
+📊 Resumen: Benja: 9 eval, 0 asuetos, 0 tareas pendientes | Valen: 9 eval, 0 asuetos, 1 tareas pendientes
 ```
 
 ## Technical Details
@@ -218,27 +217,43 @@ async def get_calendar_ical(self):
         description = extract_description(vevent)
         date = extract_date(vevent)
         
-        # 5. Categorize with LLM
-        category = await categorize_event_with_llm(title, description)
+        # 5. Categorize with keyword matching
+        category = categorize_event_with_keywords(title, description)
 ```
 
-### LLM Categorization
+### Keyword Categorization
 
 ```python
-async def categorize_event_with_llm(title: str, description: str) -> str:
-    prompt = f"""Analiza este evento escolar y clasificalo...
+def categorize_event_with_keywords(title: str, description: str) -> str:
+    """Categorize event using deterministic keyword matching."""
+    text = (title + " " + description).lower()
     
-    Evento: {title}
-    Descripción: {description}
+    # Keyword lists (simplified)
+    feriados_keywords = ['feriado', 'asueto', 'no hay clases', ...]
+    examenes_keywords = ['examen', 'evaluacion', 'prueba', ...]
+    entregas_keywords = ['entrega', 'tp', 'trabajo practico', ...]
+    academico_keywords = ['inicio', 'fin', 'inscripcion', ...]
+    conmemoraciones_keywords = ['iom', 'dia de', 'conmemoracion', ...]
     
-    Responde SOLO con la categoría."""
-    
-    response = ollama.generate(model="kimi-k2.5:cloud", prompt=prompt)
-    return normalize_category(response)
+    # Priority: Feriados > Examenes > Entregas > Academico > Conmemoraciones > Otro
+    if any(k in text for k in feriados_keywords):
+        return "Feriados"
+    elif any(k in text for k in examenes_keywords):
+        return "Examenes"
+    elif any(k in text for k in entregas_keywords):
+        return "Entregas"
+    elif any(k in text for k in academico_keywords):
+        return "Academico"
+    elif any(k in text for k in conmemoraciones_keywords):
+        return "Conmemoraciones"
+    else:
+        return "Otro"
 ```
 
-**Timeout:** 30 seconds per event
-**Fallback:** Keyword matching if LLM fails
+**Characteristics:**
+- **Deterministic**: Same input always yields same category
+- **Fast**: No network calls or LLM latency
+- **Language‑aware**: Keywords in Spanish, covers ORT‑specific terms (Pesaj, Iom, etc.)
 
 ### File Structure
 
@@ -252,34 +267,35 @@ campus-ort-report/
 
 ## Automation
 
-### Daily Reports via OpenClaw Cron
+### Weekly Reports via OpenClaw Cron
 
 ```bash
 # Check current cron jobs
 openclaw cron list
 
 # The skill should have a cron job configured like:
-# Name: "Daily Academic Reports - Benja y Valen"
-# Schedule: "0 18 * * 1,2,3,4,5" (weekdays at 18:00)
+# Name: "Weekly Academic Reports - Benja y Valen"
+# Schedule: "0 18 * * 3" (Wednesdays at 18:00, local time)
 # Command: python3 generate_telegram_report.py
 ```
 
 ## Troubleshooting
 
 - **1Password token not found**: Ensure `OP_SERVICE_ACCOUNT_TOKEN` is exported
-- **Ollama not responding**: Check Ollama is running with `ollama list`
+- **Playwright not installed**: Run `pip3 install playwright && playwright install`
 - **iCal URL not found**: The embedCode input may not be loaded yet (navigation issue)
-- **LLM timeout**: Events will be categorized with keyword fallback
+- **SSL certificate error**: The script uses unverified SSL context for ORT's certificate
 - **Empty report**: Check `/tmp/calendar_page.html` for debugging
 
 ## Recent Changes
 
-### v3.0 - iCal + LLM Categorization
+### v3.0 - iCal + Keyword Categorization
 - Migrated from HTML scraping to iCal feed extraction
-- Added LLM-based event categorization (Ollama)
+- **Replaced LLM with deterministic keyword matching** (no Ollama dependency)
 - Unified event list (no more separate sections)
-- Categories: Examen, Entrega, Feriado, Evento Academico, Otro
+- Categories: Examenes, Entregas, Feriados, Academico, Conmemoraciones, Otro
 - Removed pizarron message extraction (focus on calendar events)
+- Added SSL bypass for ORT's certificate
 
 ## Author
 

@@ -1002,7 +1002,9 @@ class OrtCampusScraperV2:
             req = urllib.request.Request(ical_url, headers=headers)
             
             try:
-                with urllib.request.urlopen(req, timeout=30) as response:
+                import ssl
+                context = ssl._create_unverified_context()
+                with urllib.request.urlopen(req, timeout=30, context=context) as response:
                     ical_data = response.read().decode('utf-8')
             except Exception as e:
                 raise Exception(f"Error downloading iCal: {e}")
