@@ -255,30 +255,6 @@ def main():
     
     print(f"✓ Mensaje guardado en: {output_file}")
     
-    # Enviar mensaje por Telegram
-    print("5. Enviando mensaje por Telegram...")
-    try:
-        # Guardar mensaje en archivo temporal
-        msg_file = "/tmp/telegram_msg.txt"
-        with open(msg_file, 'w') as f:
-            f.write(mensaje)
-        
-        # Enviar al topic ORT del grupo general
-        cmd = f'/usr/local/bin/openclaw message send --channel telegram --target "-1003786235615:topic:39" --message "$(cat {msg_file})"'
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode == 0:
-            print("✓ Mensaje enviado por Telegram")
-        else:
-            print(f"⚠ No se pudo enviar automáticamente: {result.stderr}")
-    except Exception as e:
-        print(f"⚠ Error enviando mensaje: {e}")
-    
     print()
     print("=" * 50)
     print("MENSAJE PARA TELEGRAM:")
