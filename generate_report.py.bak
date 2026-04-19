@@ -17,53 +17,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from scraper import OrtCampusScraperV2 as OrtCampusScraper, get_credentials_from_1password
 
-CACHE_DIR = "/tmp/campus_ort_cache"
-CACHE_TTL_SECONDS = 60 * 60 * 2
-
-
-def ensure_cache_dir():
-    os.makedirs(CACHE_DIR, exist_ok=True)
-
-
-def get_cache_paths(student_name: str):
-    base = student_name.lower()
-    return {
-        "report": os.path.join(CACHE_DIR, f"reporte_academico_{base}.txt"),
-        "tasks": os.path.join(CACHE_DIR, f"tareas_{base}.json"),
-        "meta": os.path.join(CACHE_DIR, f"meta_{base}.json"),
-    }
-
-
-def is_cache_fresh(path: str) -> bool:
-    return os.path.exists(path) and (datetime.now().timestamp() - os.path.getmtime(path) <= CACHE_TTL_SECONDS)
-
-
-def load_cached_report(student_name: str):
-    paths = get_cache_paths(student_name)
-    if not (is_cache_fresh(paths["report"]) and is_cache_fresh(paths["tasks"]) and is_cache_fresh(paths["meta"])):
-        return None
-    try:
-        with open(paths["report"], "r", encoding="utf-8") as f:
-            report = f.read()
-        with open(paths["tasks"], "r", encoding="utf-8") as f:
-            tasks = json.load(f)
-        with open(paths["meta"], "r", encoding="utf-8") as f:
-            meta = json.load(f)
-        return {"report": report, "tasks": tasks, "meta": meta}
-    except Exception:
-        return None
-
-
-def save_cached_report(student_name: str, report: str, tasks: list, meta: dict):
-    ensure_cache_dir()
-    paths = get_cache_paths(student_name)
-    with open(paths["report"], "w", encoding="utf-8") as f:
-        f.write(report)
-    with open(paths["tasks"], "w", encoding="utf-8") as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
-    with open(paths["meta"], "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-
 
 def get_emoji_for_event(evt_type: str, title: str = "") -> str:
     """Get appropriate emoji based on event type and title"""
@@ -103,61 +56,13 @@ def truncate_text(text: str, max_length: int = 60) -> str:
     return text
 
 
-def build_urgent_alerts(today, calendar_events, dashboard_tareas):
-    alerts = []
-
-    urgent_events = [e for e in calendar_events if e['type'] in ['examen', 'entrega'] and 0 <= (e['date_obj'] - today).days <= 2]
-    if urgent_events:
-        alerts.append({
-            "title": "🚨 URGENTE (próximas 48h)",
-            "items": [f"{e['date']} - {e['title']} ({e.get('categoria', 'Otro')})" for e in urgent_events]
-        })
-
-    exam_events = sorted([e for e in calendar_events if e['type'] == 'examen'], key=lambda x: x['date_obj'])
-    for i in range(len(exam_events)):
-        cluster = [exam_events[i]]
-        for j in range(i + 1, len(exam_events)):
-            if (exam_events[j]['date_obj'] - exam_events[i]['date_obj']).days <= 1:
-                cluster.append(exam_events[j])
-        if len(cluster) >= 3:
-            alerts.append({
-                "title": f"⚠️ CLUSTER ({len(cluster)} evaluaciones en 2 días)",
-                "items": [f"{e['date']} - {e['title']}" for e in cluster]
-            })
-            break
-
-    heavy_tasks = [t for t in dashboard_tareas if t.get('pending', 0) >= 3]
-    if heavy_tasks:
-        alerts.append({
-            "title": "📚 TAREAS PARA REVISAR",
-            "items": [f"{t['materia']}: {t['pending']} pendientes" for t in heavy_tasks]
-        })
-
-    return alerts
-
-
-async def generate_academic_report(student_name: str, days_back: int = 15, force_refresh: bool = False):
+async def generate_academic_report(student_name: str, days_back: int = 15):
     """Generate complete academic report for a student"""
     
     today = datetime.now()
     today_str = today.strftime('%d/%m/%Y')
     
     print(f"=== Generating Academic Report for {student_name} ===\n")
-
-    if not force_refresh:
-        cached = load_cached_report(student_name)
-        if cached:
-            output_file = f"/tmp/reporte_academico_{student_name.lower()}.txt"
-            tasks_file = f"/tmp/tareas_{student_name.lower()}.json"
-            with open(output_file, "w", encoding="utf-8") as f:
-                f.write(cached["report"])
-            with open(tasks_file, "w", encoding="utf-8") as f:
-                json.dump(cached["tasks"], f, ensure_ascii=False, indent=2)
-            print("✓ Using cached report\n")
-            print(cached["report"])
-            print(f"\n✅ Report saved to: {output_file}")
-            print(f"✅ Tasks saved to: {tasks_file}")
-            return True
     
     # Get credentials from 1Password
     creds_item = f"ORT Campus - {student_name}"
@@ -215,18 +120,6 @@ async def generate_academic_report(student_name: str, days_back: int = 15, force
         upcoming_events = [e for e in calendar_events 
                           if 0 <= (e['date_obj'] - today).days <= 15]
         upcoming_events.sort(key=lambda x: x['date_obj'])
-
-        urgent_alerts = build_urgent_alerts(today, calendar_events, dashboard_tareas)
-        if urgent_alerts:
-            lines.extend([
-                "🚨 ALERTAS TEMPRANAS",
-                "───────────────────────────────────────────────────────────",
-            ])
-            for alert in urgent_alerts:
-                lines.append(alert["title"])
-                for item in alert["items"][:8]:
-                    lines.append(f"• {item}")
-                lines.append("")
         
         # EVENTOS PRÓXIMOS (15 días) - Sección única con categoría LLM
         if upcoming_events:
@@ -275,17 +168,6 @@ async def generate_academic_report(student_name: str, days_back: int = 15, force
         tasks_file = f"/tmp/tareas_{student_name.lower()}.json"
         with open(tasks_file, "w", encoding="utf-8") as f:
             json.dump(dashboard_tareas, f, ensure_ascii=False, indent=2)
-
-        save_cached_report(
-            student_name,
-            report,
-            dashboard_tareas,
-            {
-                "generated_at": today.isoformat(),
-                "urgent_alerts": urgent_alerts,
-                "grade_info": grade_info,
-            }
-        )
         
         print(report)
         print(f"\n✅ Report saved to: {output_file}")
@@ -305,11 +187,10 @@ def main():
     parser = argparse.ArgumentParser(description="Generate ORT Campus Academic Report")
     parser.add_argument("--student", required=True, help="Student name (e.g., 'Benja', 'Valen')")
     parser.add_argument("--days", type=int, default=15, help="Days back for messages (default: 15)")
-    parser.add_argument("--force-refresh", action="store_true", help="Ignore cache and refresh data")
     
     args = parser.parse_args()
     
-    asyncio.run(generate_academic_report(args.student, args.days, force_refresh=args.force_refresh))
+    asyncio.run(generate_academic_report(args.student, args.days))
 
 
 if __name__ == "__main__":

@@ -48,8 +48,7 @@ def parse_report(filepath):
         'evaluaciones': [],
         'asuetos': [],
         'otros': [],
-        'tareas': [],
-        'alertas': []
+        'tareas': []
     }
     
     # Cargar tareas desde JSON si existe
@@ -67,28 +66,7 @@ def parse_report(filepath):
         data['nombre'] = nombre_match.group(1)
         data['curso'] = nombre_match.group(2).strip()
     
-    in_alerts = False
-    current_alert_title = None
-
-    # Extraer alertas tempranas y líneas con eventos
-    for line in content.split('\n'):
-        stripped = line.strip()
-
-        if stripped == '🚨 ALERTAS TEMPRANAS':
-            in_alerts = True
-            current_alert_title = None
-            continue
-        if in_alerts and stripped.startswith('📅 PRÓXIMOS EVENTOS'):
-            in_alerts = False
-        if in_alerts:
-            if stripped.startswith('🚨') or stripped.startswith('⚠️') or stripped.startswith('📚'):
-                current_alert_title = stripped
-                data['alertas'].append({'title': current_alert_title, 'items': []})
-                continue
-            if stripped.startswith('• ') and data['alertas']:
-                data['alertas'][-1]['items'].append(stripped[2:])
-                continue
-
+    # Extraer líneas con eventos (buscar por patrón de fecha)
     for line in content.split('\n'):
         line = line.strip()
         
@@ -137,21 +115,7 @@ def format_telegram_message(benja_data, valen_data):
     anio = hoy.year
     
     mensaje = f"📚 Reporte Campus ORT - {dia_nombre} {dia_num}/{hoy.month}/{anio}\n"
-
-    all_alerts = []
-    for student, data in [('Benja', benja_data), ('Valen', valen_data)]:
-        for alert in data.get('alertas', []):
-            all_alerts.append((student, alert))
-
-    if all_alerts:
-        mensaje += "\n🚨 URGENTE\n\n"
-        for student, alert in all_alerts[:6]:
-            mensaje += f"• {student} - {alert['title']}\n"
-            for item in alert['items'][:3]:
-                mensaje += f"  ◦ {item}\n"
-        mensaje += "\n───\n"
-    else:
-        mensaje += "\n───\n"
+    mensaje += "\n───\n"
     
     # BENJA
     mensaje += f"\n**BENJA** - {benja_data['curso']}\n"
@@ -263,8 +227,8 @@ def main():
         with open(msg_file, 'w') as f:
             f.write(mensaje)
         
-        # Enviar al topic ORT del grupo general
-        cmd = f'/usr/local/bin/openclaw message send --channel telegram --target "-1003786235615:topic:39" --message "$(cat {msg_file})"'
+        # Usar shell con el mensaje leído del archivo
+        cmd = f'/usr/local/bin/openclaw message send -t 7527142707 --message "$(cat {msg_file})"'
         result = subprocess.run(
             cmd,
             shell=True,
