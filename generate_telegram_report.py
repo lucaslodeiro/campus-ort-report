@@ -12,7 +12,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-SKILL_PATH = "/usr/local/lib/node_modules/openclaw/skills/campus-ort-report"
+SKILL_PATH = str(Path(__file__).resolve().parent)
 REPORT_BENJA = "/tmp/reporte_academico_benja.txt"
 REPORT_VALEN = "/tmp/reporte_academico_valen.txt"
 TASKS_BENJA = "/tmp/tareas_benja.json"
